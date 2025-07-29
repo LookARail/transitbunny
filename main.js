@@ -39,6 +39,54 @@ const TIME_STEP_SEC    = 10;    // simulated seconds per frame
 const map = L.map('map').setView([0, 0], 13);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
+async function loadGtfsFromWebZip() {
+
+
+  const url = 'gtfs.zip';
+
+  try {
+    const res = await fetch(url);
+    const buffer = await res.arrayBuffer();
+    const zip = fflate.unzipSync(new Uint8Array(buffer));
+
+    const decoder = new TextDecoder();
+    const stopsText = decoder.decode(zip['stops.txt']);
+    const routesText = decoder.decode(zip['routes.txt']);
+    const tripsText = decoder.decode(zip['trips.txt']);
+    const shapesText = decoder.decode(zip['shapes.txt']);
+    const stopTimesText = decoder.decode(zip['stop_times.txt']);
+
+    stops = parseStops(stopsText);
+    shapes = parseShapes(shapesText);
+    routes = parseRoutes(routesText);
+    trips = parseTrips(tripsText);
+    stopTimes = parseStopTimes(stopTimesText);
+    
+    // Precompute trip start times (stop_sequence === 1)
+    tripStartTimeMap = {};
+    tripStopsMap     = {};
+    stopTimes.forEach(st => {
+      // start time
+      if (st.stop_sequence === 1) {
+        // Only set first departure or arrival
+        const t = tripStartTimeMap[st.trip_id];
+        const timeSec = timeToSeconds(st.departure_time || st.arrival_time);
+        if (t === undefined || timeSec < t) tripStartTimeMap[st.trip_id] = timeSec;
+      }
+      // stops map
+      if (!tripStopsMap[st.trip_id]) tripStopsMap[st.trip_id] = new Set();
+      tripStopsMap[st.trip_id].add(st.stop_id);
+    });
+
+    initializeTripsRoutes(trips, routes);
+    plotStopsAndShapes();
+
+  } catch (err) {
+    console.error('Failed to load GTFS ZIP:', err);
+  }
+}
+
+
 // === Load GTFS data ===
 function loadLocalGtfsData() {
   Promise.all([
@@ -490,7 +538,7 @@ function togglePauseResume(){
 
 // === Run on Load ===
 window.addEventListener('DOMContentLoaded', () => {
-  loadLocalGtfsData();
+  loadGtfsFromWebZip();
 
   document.getElementById('routeTypeSelect');
   document.getElementById('serviceIdSelect');
