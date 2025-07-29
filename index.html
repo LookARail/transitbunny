@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>GTFS Animation</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+    }
+    #map {
+      width: 100%;
+      height: 100%;
+    }
+    #controls {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 1000;
+      background: rgba(255,255,255,0.9);
+      padding: 10px;
+      border-radius: 6px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    }
+    button {
+      margin-right: 6px;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="controls">
+  <label>
+    RouteType:
+    <select id="routeTypeSelect" multiple size="4" style="min-width:120px;"></select>
+  </label>
+  <label>
+      Short Name:
+      <select id="routeShortNameSelect" multiple size="4"></select>
+  </label>
+  <label style="margin-left:10px;">
+    ServiceID:
+    <select id="serviceIdSelect" multiple size="4" style="min-width:120px;"></select>
+  </label>
+    <button id="playBtn">▶️ Play</button>
+    <button id="pauseButton">Pause</button>
+    <button id="stopBtn">⏹️ Stop</button>
+      <span id="timeDisplay" style="margin-left: 10px; font-weight: bold;">00:00:00</span>
+  </div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Your main GTFS JS -->
+  <script src="main.js"></script>
+</body>
+</html>
