@@ -32,6 +32,8 @@
 <body>
   <div id="map"></div>
   <div id="controls">
+  <input type="file" id="gtfsFileInput" accept=".zip" style="display:none" />
+  <button id="uploadGtfsBtn">Upload GTFS ZIP</button>
   <label>
     RouteType:
     <select id="routeTypeSelect" multiple size="4" style="min-width:120px;"></select>
@@ -44,6 +46,14 @@
     ServiceID:
     <select id="serviceIdSelect" multiple size="4" style="min-width:120px;"></select>
   </label>
+  <label for="speedSelect">Speed:</label>
+  <select id="speedSelect">
+    <option value="1"> 1x</option>
+    <option value="10">10x</option>
+    <option value="60">60x</option>
+    <option value="300">300x</option>
+  </select>
+
     <button id="playBtn">▶️ Play</button>
     <button id="pauseButton">Pause</button>
     <button id="stopBtn">⏹️ Stop</button>

@@ -29,57 +29,25 @@ let tripStartTimeMap = {};   //
 let tripStopsMap     = {};   // 
 
 // === Short‑name lookup by route_type ===
-const shortAndLongNamesByType = {}; // 
+let shortAndLongNamesByType = {}; // 
 
 // === Animation Controls ===
 const FRAME_INTERVAL_MS = 100;   // real ms per frame
-const TIME_STEP_SEC    = 10;    // simulated seconds per frame
+const TIME_STEP_SEC    = 1;    // simulated seconds per frame
+let speedMultiplier = 1;
 
 // === Initialize Leaflet Map ===
 const map = L.map('map').setView([0, 0], 13);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
 async function loadGtfsFromWebZip() {
-
-
   const url = 'gtfs.zip';
-
   try {
     const res = await fetch(url);
     const buffer = await res.arrayBuffer();
     const zip = fflate.unzipSync(new Uint8Array(buffer));
 
-    const decoder = new TextDecoder();
-    const stopsText = decoder.decode(zip['stops.txt']);
-    const routesText = decoder.decode(zip['routes.txt']);
-    const tripsText = decoder.decode(zip['trips.txt']);
-    const shapesText = decoder.decode(zip['shapes.txt']);
-    const stopTimesText = decoder.decode(zip['stop_times.txt']);
-
-    stops = parseStops(stopsText);
-    shapes = parseShapes(shapesText);
-    routes = parseRoutes(routesText);
-    trips = parseTrips(tripsText);
-    stopTimes = parseStopTimes(stopTimesText);
-    
-    // Precompute trip start times (stop_sequence === 1)
-    tripStartTimeMap = {};
-    tripStopsMap     = {};
-    stopTimes.forEach(st => {
-      // start time
-      if (st.stop_sequence === 1) {
-        // Only set first departure or arrival
-        const t = tripStartTimeMap[st.trip_id];
-        const timeSec = timeToSeconds(st.departure_time || st.arrival_time);
-        if (t === undefined || timeSec < t) tripStartTimeMap[st.trip_id] = timeSec;
-      }
-      // stops map
-      if (!tripStopsMap[st.trip_id]) tripStopsMap[st.trip_id] = new Set();
-      tripStopsMap[st.trip_id].add(st.stop_id);
-    });
-
-    initializeTripsRoutes(trips, routes);
-    plotStopsAndShapes();
+    LoadGTFSZipFile(zip);
 
   } catch (err) {
     console.error('Failed to load GTFS ZIP:', err);
@@ -87,21 +55,38 @@ async function loadGtfsFromWebZip() {
 }
 
 
-// === Load GTFS data ===
-function loadLocalGtfsData() {
-  Promise.all([
-    fetch('gtfs/stops.txt').then(res => res.text()),
-    fetch('gtfs/shapes.txt').then(res => res.text()),
-    fetch('gtfs/routes.txt').then(res => res.text()),
-    fetch('gtfs/trips.txt').then(res => res.text()),
-    fetch('gtfs/stop_times.txt').then(res => res.text())
-  ]).then(([stopsText, shapesText, routesText, tripsText, stopTimesText]) => {
+// Function to load GTFS from a user-uploaded zip file
+function loadGtfsFromUserUploadZip(file) {
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const buffer = e.target.result;
+      const zip = fflate.unzipSync(new Uint8Array(buffer));
+      LoadGTFSZipFile(zip);     
+    } catch (err) {     
+      alert('Failed to load GTFS ZIP: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function LoadGTFSZipFile(zipFile) {
+  try {
+    clearAllMapLayersAndMarkers();
+    const decoder = new TextDecoder();
+
+    const stopsText = decoder.decode(zipFile['stops.txt']);
+    const routesText = decoder.decode(zipFile['routes.txt']);
+    const tripsText = decoder.decode(zipFile['trips.txt']);
+    const shapesText = decoder.decode(zipFile['shapes.txt']);
+    const stopTimesText = decoder.decode(zipFile['stop_times.txt']);
+
     stops = parseStops(stopsText);
     shapes = parseShapes(shapesText);
     routes = parseRoutes(routesText);
     trips = parseTrips(tripsText);
     stopTimes = parseStopTimes(stopTimesText);
-    
+
     // Precompute trip start times (stop_sequence === 1)
     tripStartTimeMap = {};
     tripStopsMap     = {};
@@ -120,9 +105,36 @@ function loadLocalGtfsData() {
 
     initializeTripsRoutes(trips, routes);
     plotStopsAndShapes();
-  }).catch(error => console.error('GTFS Load Error:', error));
+  } catch (err) {
+    console.error('Failed to process GTFS ZIP:', err);
+  }
 }
 
+
+function clearAllMapLayersAndMarkers() {
+  // Remove stops layer if present
+  if (stopsLayer && map.hasLayer(stopsLayer)) {
+    map.removeLayer(stopsLayer);
+    stopsLayer = null;
+  }
+  // Remove shapes layer if present
+  if (shapesLayer && map.hasLayer(shapesLayer)) {
+    map.removeLayer(shapesLayer);
+    shapesLayer = null;
+  }
+  // Remove all vehicle markers
+  if (Array.isArray(vehicleMarkers)) {
+    vehicleMarkers.forEach(marker => {
+      if (marker && map.hasLayer(marker)) {
+        map.removeLayer(marker);
+      }
+    });
+    vehicleMarkers = [];
+  }
+  // Also clear tripPaths and remainingTrips for safety
+  tripPaths = [];
+  remainingTrips = [];
+}
 
 function parseStops(text) {
   const lines = text.trim().split('\n');
@@ -188,10 +200,26 @@ function parseRoutes(text) {
 
 
 function parseTrips(text) {
-  const rows = text.trim().split('\n').slice(1);
-  return rows.map(row => {
-    const [route_id, service_id, trip_id, headsign, trip_short_name, direction_id, block_id, shape_id] = row.split(',');
-    return { route_id, service_id, trip_id, shape_id };
+  const lines = text.trim().split('\n');
+  const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+
+  const routeIdIndex = headers.indexOf('route_id');
+  const serviceIdIndex = headers.indexOf('service_id');
+  const tripIdIndex = headers.indexOf('trip_id');
+  const shapeIdIndex = headers.indexOf('shape_id');
+
+  if (routeIdIndex === -1 || serviceIdIndex === -1 || tripIdIndex === -1) {
+    throw new Error('Missing required columns in trips.txt');
+  }
+
+  return lines.slice(1).map(row => {
+    const cols = row.split(',');
+    return {
+      route_id: cols[routeIdIndex],
+      service_id: cols[serviceIdIndex],
+      trip_id: cols[tripIdIndex],
+      shape_id: shapeIdIndex !== -1 ? cols[shapeIdIndex] : undefined
+    };
   });
 }
 
@@ -211,6 +239,8 @@ function parseStopTimes(text) {
 
 // === Data Relationships & Filters ===
 function initializeTripsRoutes(tripsArr, routesArr) {
+  shortAndLongNamesByType = {};
+
   const routeMap = new Map(routesArr.map(r=>[r.route_id,r]));
   routeTypes = [...new Set(routesArr.map(r => r.route_type))];
   serviceIds = [...new Set(tripsArr.map(t => t.service_id))];
@@ -417,7 +447,7 @@ function startAnimation() {
   if (simulationTime == null) return;
   if (animationTimer) return;
   animationTimer = setInterval(() => {
-      simulationTime += TIME_STEP_SEC;
+      simulationTime += TIME_STEP_SEC * speedMultiplier;
       document.getElementById('timeDisplay').textContent = formatTime(simulationTime);
 
       UpdateVehiclePositions();
@@ -529,11 +559,16 @@ function togglePauseResume(){
   }else{    
     pauseButton.textContent = 'Pause';
       animationTimer = setInterval(() => {
-      simulationTime += TIME_STEP_SEC;
+      simulationTime += TIME_STEP_SEC * speedMultiplier;
       document.getElementById('timeDisplay').textContent = formatTime(simulationTime);
       UpdateVehiclePositions();
     }, FRAME_INTERVAL_MS);
   }
+}
+
+//speed control
+function changeAnimationSpeed(){
+    speedMultiplier = parseFloat(document.getElementById('speedSelect').value);
 }
 
 // === Run on Load ===
@@ -549,4 +584,16 @@ window.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('pauseButton').addEventListener('click', togglePauseResume);
   document.getElementById('stopBtn').addEventListener('click', stopAnimation);
+  document.getElementById('speedSelect').addEventListener('change', changeAnimationSpeed);
+
+  document.getElementById('uploadGtfsBtn').addEventListener('click', () => {
+    document.getElementById('gtfsFileInput').click();
+  });
+
+  document.getElementById('gtfsFileInput').addEventListener('change', (event) => {
+    const file = event.target.files[0];
+    if (file) {
+      loadGtfsFromUserUploadZip(file);
+    }
+  });
 });
