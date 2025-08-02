@@ -30,10 +30,11 @@ let tripStopsMap     = {};   //
 
 // === Short‑name lookup by route_type ===
 let shortAndLongNamesByType = {}; // 
+let shortNameToServiceIds = {}; 
 
 // === Animation Controls ===
 const FRAME_INTERVAL_MS = 100;   // real ms per frame
-const TIME_STEP_SEC    = 1;    // simulated seconds per frame
+const TIME_STEP_SEC    = 10;    // simulated seconds per frame
 let speedMultiplier = 1;
 
 // === Initialize Leaflet Map ===
@@ -46,9 +47,7 @@ async function loadGtfsFromWebZip() {
     const res = await fetch(url);
     const buffer = await res.arrayBuffer();
     const zip = fflate.unzipSync(new Uint8Array(buffer));
-
     LoadGTFSZipFile(zip);
-
   } catch (err) {
     console.error('Failed to load GTFS ZIP:', err);
   }
@@ -56,36 +55,65 @@ async function loadGtfsFromWebZip() {
 
 
 // Function to load GTFS from a user-uploaded zip file
-function loadGtfsFromUserUploadZip(file) {
+async function loadGtfsFromUserUploadZip(file) {
+
   const reader = new FileReader();
   reader.onload = function(e) {
     try {
       const buffer = e.target.result;
       const zip = fflate.unzipSync(new Uint8Array(buffer));
+
       LoadGTFSZipFile(zip);     
     } catch (err) {     
       alert('Failed to load GTFS ZIP: ' + err.message);
     }
   };
   reader.readAsArrayBuffer(file);
+
 }
 
-function LoadGTFSZipFile(zipFile) {
+async function LoadGTFSZipFile(zipFile) {
   try {
+    showProgressBar();
+    setProgressBar(10);
+    await Promise.resolve();
+
     clearAllMapLayersAndMarkers();
     const decoder = new TextDecoder();
 
     const stopsText = decoder.decode(zipFile['stops.txt']);
     const routesText = decoder.decode(zipFile['routes.txt']);
+    setProgressBar(30);
+    await Promise.resolve();
+
     const tripsText = decoder.decode(zipFile['trips.txt']);
     const shapesText = decoder.decode(zipFile['shapes.txt']);
+    setProgressBar(50);
+    await Promise.resolve();
+
     const stopTimesText = decoder.decode(zipFile['stop_times.txt']);
+    setProgressBar(70);
+    await Promise.resolve();
 
     stops = parseStops(stopsText);
+    setProgressBar(75);
+    await Promise.resolve();
+
     shapes = parseShapes(shapesText);
+    setProgressBar(80);
+    await Promise.resolve();
+
     routes = parseRoutes(routesText);
+    setProgressBar(85);
+    await Promise.resolve();
+
     trips = parseTrips(tripsText);
+    setProgressBar(90);
+    await Promise.resolve();
+
     stopTimes = parseStopTimes(stopTimesText);
+    setProgressBar(95);
+    await Promise.resolve();
 
     // Precompute trip start times (stop_sequence === 1)
     tripStartTimeMap = {};
@@ -102,10 +130,15 @@ function LoadGTFSZipFile(zipFile) {
       if (!tripStopsMap[st.trip_id]) tripStopsMap[st.trip_id] = new Set();
       tripStopsMap[st.trip_id].add(st.stop_id);
     });
+    setProgressBar(98);
+    await Promise.resolve();
 
     initializeTripsRoutes(trips, routes);
     plotStopsAndShapes();
+    setProgressBar(100);
+    setTimeout(hideProgressBar, 500);
   } catch (err) {
+    hideProgressBar();
     console.error('Failed to process GTFS ZIP:', err);
   }
 }
@@ -134,6 +167,26 @@ function clearAllMapLayersAndMarkers() {
   // Also clear tripPaths and remainingTrips for safety
   tripPaths = [];
   remainingTrips = [];
+    // Clear global GTFS data
+  stops = [];
+  shapes = [];
+  routes = [];
+  trips = [];
+  stopTimes = [];
+  // Clear filter & animation state
+  routeTypes = [];
+  serviceIds = [];
+  filteredTrips = [];
+  // Clear precomputed maps
+  tripStartTimeMap = {};
+  tripStopsMap = {};
+  // Clear short-name lookup
+  shortAndLongNamesByType = {};
+  shortNameToServiceIds = {};
+  // Clear animation state
+  simulationTime = null;
+  animationStartTime = null;
+  currentTrip = null;
 }
 
 function parseStops(text) {
@@ -245,11 +298,22 @@ function initializeTripsRoutes(tripsArr, routesArr) {
   routeTypes = [...new Set(routesArr.map(r => r.route_type))];
   serviceIds = [...new Set(tripsArr.map(t => t.service_id))];
   
+   // Assign route object to each trip first!
+  tripsArr.forEach(t => t.route = routeMap.get(t.route_id));
+
   // Build shortNamesByType per route_type
   routesArr.forEach(r => {
     if (!shortAndLongNamesByType[r.route_type]) shortAndLongNamesByType[r.route_type] = new Set();
     shortAndLongNamesByType[r.route_type].add(`${r.route_short_name}-${r.route_long_name}`);
   });
+
+  shortNameToServiceIds = {}; // Reset mapping
+  tripsArr.forEach(t => {
+    const key = `${t.route.route_short_name}-${t.route.route_long_name}`;
+    if (!shortNameToServiceIds[key]) shortNameToServiceIds[key] = new Set();
+    shortNameToServiceIds[key].add(t.service_id);
+  });
+
     // convert to arrays
   Object.keys(shortAndLongNamesByType).forEach(rt => {
     shortAndLongNamesByType[rt] = [...shortAndLongNamesByType[rt]].sort();
@@ -279,10 +343,20 @@ function populateFilters() {
     
     shSel.innerHTML = [...names].sort().map(n => `<option value="${n}">${n}</option>`).join('');
     filterTrips();
+    shSel.dispatchEvent(new Event('change')); // trigger short name change
   };
 
-  // Hook up short‐name & service onchange
-  shSel.onchange = filterTrips;
+  // When short-name changes, update service IDs dropdown
+  shSel.onchange = () => {
+    const chosenNames = Array.from(shSel.selectedOptions).map(o => o.value);
+    let validServiceIds = new Set();
+    chosenNames.forEach(name => {
+      (shortNameToServiceIds[name] || []).forEach(sid => validServiceIds.add(sid));
+    });
+    svSel.innerHTML = [...validServiceIds].sort().map(sid => `<option value="${sid}">${sid}</option>`).join('');
+    filterTrips();
+  };
+
   svSel.onchange = filterTrips;
 
   // trigger initial population of short names
@@ -448,8 +522,8 @@ function startAnimation() {
   if (animationTimer) return;
   animationTimer = setInterval(() => {
       simulationTime += TIME_STEP_SEC * speedMultiplier;
+      updateTripPlot(simulationTime, tripPaths.length);
       document.getElementById('timeDisplay').textContent = formatTime(simulationTime);
-
       UpdateVehiclePositions();
     }, FRAME_INTERVAL_MS);
 }
@@ -562,6 +636,7 @@ function togglePauseResume(){
       simulationTime += TIME_STEP_SEC * speedMultiplier;
       document.getElementById('timeDisplay').textContent = formatTime(simulationTime);
       UpdateVehiclePositions();
+      updateTripPlot(simulationTime, tripPaths.length); // Add here too
     }, FRAME_INTERVAL_MS);
   }
 }
@@ -569,6 +644,17 @@ function togglePauseResume(){
 //speed control
 function changeAnimationSpeed(){
     speedMultiplier = parseFloat(document.getElementById('speedSelect').value);
+}
+
+function showProgressBar() {
+  document.getElementById('progressBarContainer').style.display = 'block';
+  setProgressBar(0);
+}
+function setProgressBar(percent) {
+  document.getElementById('progressBar').style.width = percent + '%';
+}
+function hideProgressBar() {
+  document.getElementById('progressBarContainer').style.display = 'none';
 }
 
 // === Run on Load ===
@@ -596,4 +682,70 @@ window.addEventListener('DOMContentLoaded', () => {
       loadGtfsFromUserUploadZip(file);
     }
   });
+  initTripPlot();
 });
+
+//#region Trip Plotting
+let tripPlotChart = null;
+let tripPlotData = {
+  labels: [],
+  datasets: [{
+    label: 'Active Trips',
+    data: [],
+    fill: true,
+    backgroundColor: 'rgba(0,120,215,0.2)',
+    borderColor: '#0078d7',
+    tension: 0.2
+  }]
+};
+
+function initTripPlot() {
+  const ctx = document.getElementById('tripPlot').getContext('2d');
+  tripPlotChart = new Chart(ctx, {
+    type: 'line',
+    data: tripPlotData,
+    options: {
+      responsive: true,
+      animation: false,
+      scales: {
+        x: {
+          title: { display: true, text: 'Time (HH:MM:SS)' },
+          ticks: {
+            callback: function(value) {
+              const label = this.chart.data.labels[value];
+              return label || '';
+            }
+          }
+        },
+        y: {
+          title: { display: true, text: 'Active Trips' },
+          beginAtZero: true,
+          ticks: {
+            stepSize: 1,
+            callback: function(value) {
+              return Math.round(value);
+            }
+          }
+        }
+      },
+      plugins: {
+        legend: { display: false }
+      }
+    }
+  });
+}
+
+function updateTripPlot(currentTime, activeTripsCount) {
+  // Only record if at least 60 seconds since last record
+  const lastTime = tripPlotData.labels.length > 0
+    ? timeToSeconds(tripPlotData.labels[tripPlotData.labels.length - 1])
+    : null;
+
+  if (lastTime === null || currentTime - lastTime >= 60) {
+    const timeLabel = formatTime(currentTime);
+    tripPlotData.labels.push(timeLabel);
+    tripPlotData.datasets[0].data.push(activeTripsCount);
+    tripPlotChart.update();
+  }
+}
+//#endregion

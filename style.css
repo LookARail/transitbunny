@@ -1,0 +1,159 @@
+ html, body {
+      height: 100%;
+      margin: 0;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #f5f7fa;
+    }
+
+    #map {
+      width: 100vw;
+      height: 100vh;
+    }
+
+    #controls {
+      position: absolute;
+      top: 24px;
+      left: 24px;
+      z-index: 1000;
+      background: rgba(255,255,255,0.97);
+      padding: 18px 22px 14px 22px;
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.13);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-width: 340px;
+    }
+
+    #controls label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 1rem;
+      margin-bottom: 2px;
+    }
+
+    #controls select {
+      border-radius: 6px;
+      border: 1px solid #b0b0b0;
+      padding: 4px 8px;
+      font-size: 1rem;
+      background: #f9f9f9;
+      transition: border 0.2s;
+    }
+    #controls select:focus {
+      border: 1.5px solid #0078d7;
+      outline: none;
+    }
+
+    button {
+      background: linear-gradient(90deg, #0078d7 60%, #00b4d8 100%);
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 7px 16px;
+      font-size: 1rem;
+      font-weight: 500;
+      cursor: pointer;
+      margin-right: 6px;
+      box-shadow: 0 2px 8px rgba(0,120,215,0.07);
+      transition: background 0.2s, transform 0.1s;
+    }
+    button:hover {
+      background: linear-gradient(90deg, #005fa3 60%, #0096c7 100%);
+      transform: translateY(-2px) scale(1.03);
+    }
+
+    #uploadGtfsBtn {
+      background: linear-gradient(90deg, #43cea2 0%, #185a9d 100%);
+    }
+    #uploadGtfsBtn:hover {
+      background: linear-gradient(90deg, #185a9d 0%, #43cea2 100%);
+    }
+
+    #timeDisplay {
+      font-size: 1.15rem;
+      color: #0078d7;
+      letter-spacing: 1px;
+      margin-left: 10px;
+      font-weight: bold;
+    }
+
+    @media (max-width: 600px) {
+      #controls {
+        min-width: unset;
+        width: 90vw;
+        left: 5vw;
+        top: 10px;
+        padding: 10px;
+        font-size: 0.95rem;
+      }
+      #controls label, #controls select, button {
+        font-size: 0.95rem;
+      }
+    }
+
+    .row-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 8px;
+    margin-bottom: 4px;
+    }
+
+    .row-buttons {
+    display: flex;
+    gap: 10px;
+    margin-top: 4px;
+    margin-bottom: 4px;
+    }
+
+    .tooltip {
+    position: relative;
+    cursor: pointer;
+    }
+
+    .tooltiptext {
+    visibility: hidden;
+    width: 300px;
+    background-color: #222;
+    color: #fff;
+    text-align: left;
+    border-radius: 6px;
+    padding: 7px 10px;
+    position: absolute;
+    z-index: 2000;
+    bottom: 10%; /* Position above the label */
+    left: 150%;
+    transform: translateX(-50%);
+    opacity: 0;
+    transition: opacity 0.2s;
+    font-size: 0.95rem;
+    pointer-events: none;
+    }
+
+    .tooltip:hover .tooltiptext {
+    visibility: visible;
+    opacity: 1;
+    }
+
+  #tripPlotContainer {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  width: 33vw;
+  height: 33vh;
+  background: rgba(255,255,255,0.7);
+  z-index: 1001;
+  border-radius: 12px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.12);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  }
+
+  #tripPlot {
+    width: 100% !important;
+    height: 100% !important;
+  }
