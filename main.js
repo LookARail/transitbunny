@@ -22,11 +22,13 @@ let routeTypes = [];
 let serviceIds = [];
 let filteredTrips = [];
 let tripPaths = [];
-let vehicleMarkers = null;
+let allVehicleMarkers = [];
+let vehicleMarkersWithActiveTrip = null;
 
 // === Precomputed maps ===
 let tripStartTimeMap = {};   // 
 let tripStopsMap     = {};   // 
+let blockIdTripMap = {};
 
 // === Short‑name lookup by route_type ===
 let shortAndLongNamesByType = {}; // 
@@ -34,8 +36,8 @@ let shortNameToServiceIds = {};
 
 // === Animation Controls ===
 const FRAME_INTERVAL_MS = 100;   // real ms per frame
-const TIME_STEP_SEC    = 10;    // simulated seconds per frame
-let speedMultiplier = 1;
+const TIME_STEP_SEC    = 1;    // simulated seconds per frame
+let speedMultiplier = 10;
 
 // === Initialize Leaflet Map ===
 const map = L.map('map').setView([0, 0], 13);
@@ -156,14 +158,16 @@ function clearAllMapLayersAndMarkers() {
     shapesLayer = null;
   }
   // Remove all vehicle markers
-  if (Array.isArray(vehicleMarkers)) {
-    vehicleMarkers.forEach(marker => {
+  if (Array.isArray(allVehicleMarkers)) {
+    allVehicleMarkers.forEach(marker => {
       if (marker && map.hasLayer(marker)) {
         map.removeLayer(marker);
       }
     });
-    vehicleMarkers = [];
+    allVehicleMarkers = [];
   }
+  vehicleMarkersWithActiveTrip = [];
+
   // Also clear tripPaths and remainingTrips for safety
   tripPaths = [];
   remainingTrips = [];
@@ -260,8 +264,9 @@ function parseTrips(text) {
   const serviceIdIndex = headers.indexOf('service_id');
   const tripIdIndex = headers.indexOf('trip_id');
   const shapeIdIndex = headers.indexOf('shape_id');
+  const blockIDIndex = headers.indexOf('block_id');
 
-  if (routeIdIndex === -1 || serviceIdIndex === -1 || tripIdIndex === -1) {
+  if (routeIdIndex === -1 || serviceIdIndex === -1 || tripIdIndex === -1 || blockIDIndex === -1) {
     throw new Error('Missing required columns in trips.txt');
   }
 
@@ -271,7 +276,8 @@ function parseTrips(text) {
       route_id: cols[routeIdIndex],
       service_id: cols[serviceIdIndex],
       trip_id: cols[tripIdIndex],
-      shape_id: shapeIdIndex !== -1 ? cols[shapeIdIndex] : undefined
+      shape_id: shapeIdIndex !== -1 ? cols[shapeIdIndex] : undefined,
+      block_id: blockIDIndex !== -1 ? cols[blockIDIndex] : undefined
     };
   });
 }
@@ -489,6 +495,12 @@ function interpolateTripPath(trip) {
 
 // === Animation Controls ===
 function initializeAnimation() {
+  // Clear the trip plot data
+  tripPlotData.labels = [];
+  tripPlotData.datasets[0].data = [];
+  if (tripPlotChart) tripPlotChart.update();
+  hourTicks = [];
+
   if (!filteredTrips.length) { alert('No trips match filters'); return; }
 // compute startTime for filtered trips and find earliest
 
@@ -501,12 +513,22 @@ function initializeAnimation() {
     return t;
   }).filter(t => t.startTime != null);
 
+  blockIdTripMap = {};
+  remainingTrips.forEach(t => {
+    if (!blockIdTripMap[t.block_id]) blockIdTripMap[t.block_id] = [];
+    blockIdTripMap[t.block_id].push(t);
+  });
+  // Sort each block's trips by startTime
+  Object.values(blockIdTripMap).forEach(arr => arr.sort((a, b) => a.startTime - b.startTime));
+  Object.values(blockIdTripMap).forEach(tripArr => {for (let i = 0; i < tripArr.length - 1; i++) {tripArr[i].nextTrip = tripArr[i + 1];}
+  });
+
   tripPaths = [];
-  if (Array.isArray(vehicleMarkers)) {
-    vehicleMarkers.forEach(m => { if (m) map.removeLayer(m); });
+  if (Array.isArray(vehicleMarkersWithActiveTrip)) {
+    vehicleMarkersWithActiveTrip.forEach(m => { if (m) map.removeLayer(m); });
   }
 
-  vehicleMarkers = [];
+  vehicleMarkersWithActiveTrip = [];
   simulationTime = Infinity;
 
   // determine earliest start time among remainingTrips
@@ -522,7 +544,7 @@ function startAnimation() {
   if (animationTimer) return;
   animationTimer = setInterval(() => {
       simulationTime += TIME_STEP_SEC * speedMultiplier;
-      updateTripPlot(simulationTime, tripPaths.length);
+      updateTripPlot(simulationTime, allVehicleMarkers.length);
       document.getElementById('timeDisplay').textContent = formatTime(simulationTime);
       UpdateVehiclePositions();
     }, FRAME_INTERVAL_MS);
@@ -533,46 +555,93 @@ function UpdateVehiclePositions(){
     remainingTrips = remainingTrips.filter(t=>{
       if(t.startTime<=simulationTime) {
         const path = interpolateTripPath(t);
+        path.parentTrip = t;  // Store reference to parent trip        
         if(path.length) {
           tripPaths.push(path);
-          const m = L.circleMarker([path[0].lat,path[0].lon], { radius:6, color:'green', fillColor:'green', fillOpacity:1 }).addTo(map);
-          vehicleMarkers.push(m);
+          // If inheriting marker from previous block, use it
+          if (t._inheritedMarker) {
+            vehicleMarkersWithActiveTrip.push(t._inheritedMarker);
+            if(!allVehicleMarkers.includes(t._inheritedMarker)) {
+              allVehicleMarkers.push(t._inheritedMarker);
+            }
+          } else {
+            const m = L.circleMarker([path[0].lat, path[0].lon], { radius: 6, color: 'green', fillColor: 'green', fillOpacity: 1 }).addTo(map);
+            allVehicleMarkers.push(m);
+            vehicleMarkersWithActiveTrip.push(m);
+          }
         }
         return false;
       }
       return true;
     });
 
-    // Update active vehicles and remove finished ones
+  // Update active vehicles and remove finished ones
     for (let i = tripPaths.length - 1; i >= 0; i--) {
       const path = tripPaths[i];
       const endTime = path[path.length - 1].time;
       if (simulationTime >= endTime) {
-        // Trip finished: remove marker and path
-        map.removeLayer(vehicleMarkers[i]);
-        vehicleMarkers.splice(i, 1);
+        // Trip finished: try to connect to next trip with same block_id
+        const finishedTrip =path.parentTrip;
+        //console.log(`Trip ${finishedTrip.trip_id} finished at ${formatTime(endTime)}. Trying to find next connection`);
+
+        if (finishedTrip && finishedTrip.block_id) {
+          const tripsForBlock = blockIdTripMap[finishedTrip.block_id] || [];
+          // Find the next trip with startTime > endTime
+          const nextTrip = finishedTrip.nextTrip;
+            if (nextTrip && nextTrip.startTime > endTime && remainingTrips.includes(nextTrip)) {
+            // Calculate distance and layover
+            const endPos = path[path.length - 1];
+            const stopIds = tripStopsMap[nextTrip.trip_id];
+            const startStopId = stopIds ? Array.from(stopIds)[0] : null;
+            const startStop = stops.find(s => s.id === startStopId);
+                    
+            const dist = calculateDistance(endPos.lat, endPos.lon, startStop.lat, startStop.lon);
+            const layover = nextTrip.startTime - endTime;
+            let msg = `Block ${finishedTrip.block_id}: Layover ${Math.round(layover / 60)} min, Distance ${Math.round(dist)} m`;
+            if (dist > 400 && layover > 7200) {
+              msg += " ALERT";
+              console.log(msg);
+            }              
+
+            // Inherit marker for next trip
+            nextTrip._inheritedMarker = vehicleMarkersWithActiveTrip[i];
+            vehicleMarkersWithActiveTrip[i].setLatLng([startStop.lat, startStop.lon]); //move the marker to the start of the next trip
+
+            // Remove path and marker from current arrays, but don't remove marker from map
+            tripPaths.splice(i, 1);
+            vehicleMarkersWithActiveTrip.splice(i, 1);
+            continue;
+          }
+        }
+        // No next trip: remove marker and path
+        map.removeLayer(vehicleMarkersWithActiveTrip[i]);
+        allVehicleMarkers = allVehicleMarkers.filter(m => m !== vehicleMarkersWithActiveTrip[i]); //remove from allVehicleMarkers        
+        vehicleMarkersWithActiveTrip.splice(i, 1);
         tripPaths.splice(i, 1);
         continue;
       }
+      // Animate marker as usual
       const idx = timedIndex(simulationTime, path);
       if (idx >= 0 && idx < path.length - 1) {
         const a = path[idx], b = path[idx + 1];
         const frac = (simulationTime - a.time) / (b.time - a.time);
         const lat = a.lat + (b.lat - a.lat) * frac;
         const lon = a.lon + (b.lon - a.lon) * frac;
-        vehicleMarkers[i].setLatLng([lat, lon]);
+        vehicleMarkersWithActiveTrip[i].setLatLng([lat, lon]);
       }
     }
-  
 
-    // stop when no trips remain and all animated complete
-    if (!remainingTrips.length && tripPaths.every(path => path[path.length-1].time <= simulationTime)) {
+    // Stop when no trips remain and all animated complete
+    if (!remainingTrips.length && tripPaths.every(path => path[path.length - 1].time <= simulationTime)) {
       stopAnimation();
     }
   }
 
 
-function stopAnimation() {
+function stopAnimation() {  
+  allVehicleMarkers = [];
+  updateTripPlot(simulationTime, allVehicleMarkers.length); // Final update to trip plot
+
   // 1) Clear the running interval
   if (animationTimer) {
     clearInterval(animationTimer);
@@ -580,7 +649,7 @@ function stopAnimation() {
   }
 
   // 2) Remove all vehicle markers from the map
-  vehicleMarkers.forEach(marker => {
+  allVehicleMarkers.forEach(marker => {
     if (marker && map.hasLayer(marker)) {
       map.removeLayer(marker);
     }
@@ -589,7 +658,7 @@ function stopAnimation() {
   // 3) Reset all trip/animation state
   tripPaths = [];
   remainingTrips = [];
-  vehicleMarkers = [];
+  vehicleMarkersWithActiveTrip = [];
 
   // 4) Reset the clock
   simulationTime = null;
@@ -636,7 +705,7 @@ function togglePauseResume(){
       simulationTime += TIME_STEP_SEC * speedMultiplier;
       document.getElementById('timeDisplay').textContent = formatTime(simulationTime);
       UpdateVehiclePositions();
-      updateTripPlot(simulationTime, tripPaths.length); // Add here too
+      updateTripPlot(simulationTime, allVehicleMarkers.length); // Add here too
     }, FRAME_INTERVAL_MS);
   }
 }
@@ -664,6 +733,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('routeTypeSelect');
   document.getElementById('serviceIdSelect');
   document.getElementById('playBtn').addEventListener('click', () => {
+    stopAnimation(); // Stop any existing animation first
     initializeAnimation();
     startAnimation();
   });
@@ -687,6 +757,8 @@ window.addEventListener('DOMContentLoaded', () => {
 
 //#region Trip Plotting
 let tripPlotChart = null;
+let hourTicks = []; // Track which hour ticks have been added
+
 let tripPlotData = {
   labels: [],
   datasets: [{
@@ -709,11 +781,14 @@ function initTripPlot() {
       animation: false,
       scales: {
         x: {
-          title: { display: true, text: 'Time (HH:MM:SS)' },
+          title: { display: true, text: 'Time (HH:MM)' },
           ticks: {
-            callback: function(value) {
-              const label = this.chart.data.labels[value];
-              return label || '';
+            autoSkip: false,
+            callback: function(value, index) {
+              const label = this.chart.data.labels[index];
+              // Show label if it's a whole hour
+              if (/^\d{2}:00:00$/.test(label)) return label.substring(0, 5); // HH:MM
+              return '';
             }
           }
         },
@@ -745,6 +820,26 @@ function updateTripPlot(currentTime, activeTripsCount) {
     const timeLabel = formatTime(currentTime);
     tripPlotData.labels.push(timeLabel);
     tripPlotData.datasets[0].data.push(activeTripsCount);
+
+    // Only insert hour tick if this is NOT the first data point
+    if (tripPlotData.labels.length > 1) {
+      const currentHour = Math.floor(currentTime / 3600);
+      const hourLabel = formatTime(currentHour * 3600);
+      if (
+        hourTicks.length === 0 ||
+        currentHour > hourTicks[hourTicks.length - 1]
+      ) {
+        hourTicks.push(currentHour);
+        // Only add the hour label if not present
+        if (!tripPlotData.labels.includes(hourLabel)) {
+          // Insert the hour label at the correct position (before current timeLabel)
+          const insertIndex = tripPlotData.labels.length - 1;
+          tripPlotData.labels.splice(insertIndex, 0, hourLabel);
+          // Do NOT add a data point for the hour label
+        }
+      }
+    }
+
     tripPlotChart.update();
   }
 }
