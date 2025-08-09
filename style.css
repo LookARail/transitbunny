@@ -157,3 +157,73 @@
     width: 100% !important;
     height: 100% !important;
   }
+
+
+#statisticsContainer {
+  position: absolute;
+  top: 400px;
+  right: 24px;
+  width: 33vw;
+  height: 33vh;
+  background: rgba(255,255,255,0.9);
+  z-index: 1001;
+  border-radius: 12px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.12);  
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 18px 12px 12px 12px;
+  overflow: hidden;
+}
+
+#routeStatsTableWrapper {
+  width: 100%;
+  height: calc(100% - 60px); /* leave space for button/title */
+  overflow-y: auto;
+  overflow-x: auto;
+  border-radius: 8px;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.07);
+  background: #f8fafc;
+}
+
+#routeStatsTable table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.07);
+}
+
+#routeStatsTable th, #routeStatsTable td {
+  padding: 8px 12px;
+  text-align: center;
+  border-bottom: 1px solid #e3e8ee;
+}
+
+#routeStatsTable th {
+  background: #0078d7;
+  color: #fff;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+#routeStatsTable tr:nth-child(even) {
+  background: #f5f7fa;
+}
+
+#routeStatsTable tr:hover {
+  background: #e3f2fd;
+}
+
+#GenerateStat {
+  margin-bottom: 10px;
+  margin-top: 0;
+  width: 90%;
+  max-width: 320px;
+  font-size: 1rem;
+  border-radius: 8px;
+}

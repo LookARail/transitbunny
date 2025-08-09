@@ -219,14 +219,31 @@ function parseStops(text) {
 
 
 function parseShapes(text) {
-  const rows = text.trim().split('\n').slice(1);
-  return rows.map(row => {
-    const [shape_id, lat, lon, sequence] = row.split(',');
+  const lines = text.trim().split('\n');
+  const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+
+  const shapeIDIndex = headers.indexOf('shape_id');
+  const shapeLatIndex = headers.indexOf('shape_pt_lat');
+  const shapeLonIndex = headers.indexOf('shape_pt_lon');
+  const shapeSeqIndex = headers.indexOf('shape_pt_sequence');
+  const shapeDistIndex = headers.indexOf('shape_dist_traveled');
+
+  if (shapeIDIndex === -1 || shapeLatIndex === -1 || shapeLonIndex === -1 || shapeSeqIndex === -1) {
+    throw new Error('Missing required columns in shapes.txt');
+  }
+
+  if (shapeDistIndex === -1) {
+    console.log('No shape_dist_traveled columns provided in shapes.txt');
+  }
+
+  return lines.slice(1).map(row => {
+    const cols = row.split(',');
     return {
-      shape_id,
-      lat: parseFloat(lat),
-      lon: parseFloat(lon),
-      sequence: parseInt(sequence)
+      shape_id: cols[shapeIDIndex],
+      lat: parseFloat(cols[shapeLatIndex]),
+      lon: parseFloat(cols[shapeLonIndex]),
+      sequence: parseInt(cols[shapeSeqIndex]),
+      shape_dist_traveled: shapeDistIndex !== -1 ? parseFloat(cols[shapeDistIndex]) : undefined
     };
   });
 }
@@ -563,11 +580,15 @@ function UpdateVehiclePositions(){
             vehicleMarkersWithActiveTrip.push(t._inheritedMarker);
             if(!allVehicleMarkers.includes(t._inheritedMarker)) {
               allVehicleMarkers.push(t._inheritedMarker);
+              console.log(`ALERT: Trip ${t.trip_id} added at ${simulationTime} from previous trip but previous marker not stored`);
+            }else{
+              console.log(`Trip ${t.trip_id} added at ${simulationTime} inheriting marker from previous trip`);
             }
           } else {
             const m = L.circleMarker([path[0].lat, path[0].lon], { radius: 6, color: 'green', fillColor: 'green', fillOpacity: 1 }).addTo(map);
             allVehicleMarkers.push(m);
             vehicleMarkersWithActiveTrip.push(m);
+            console.log(`Trip ${t.trip_id} added at ${simulationTime} - A new trip`);
           }
         }
         return false;
@@ -597,25 +618,28 @@ function UpdateVehiclePositions(){
                     
             const dist = calculateDistance(endPos.lat, endPos.lon, startStop.lat, startStop.lon);
             const layover = nextTrip.startTime - endTime;
-            let msg = `Block ${finishedTrip.block_id}: Layover ${Math.round(layover / 60)} min, Distance ${Math.round(dist)} m`;
-            if (dist > 400 && layover > 7200) {
-              msg += " ALERT";
+            if (dist > 400 || layover > 7200) {
+              let msg = `Block ${finishedTrip.block_id} involving trips ${finishedTrip.trip_id} and ${nextTrip.trip_id}: Layover ${Math.round(layover / 60)} min, Distance ${Math.round(dist)} m`;
+              msg += " ALERT: This is not considered a connection although the trips share the same block_id";
               console.log(msg);
-            }              
-
-            // Inherit marker for next trip
-            nextTrip._inheritedMarker = vehicleMarkersWithActiveTrip[i];
-            vehicleMarkersWithActiveTrip[i].setLatLng([startStop.lat, startStop.lon]); //move the marker to the start of the next trip
-
-            // Remove path and marker from current arrays, but don't remove marker from map
-            tripPaths.splice(i, 1);
-            vehicleMarkersWithActiveTrip.splice(i, 1);
-            continue;
+              //treat this case as if the block_id is miscoded, and the trip is not the same physical vehicle
+            }else{              
+              // Inherit marker for next trip
+              nextTrip._inheritedMarker = vehicleMarkersWithActiveTrip[i];
+              vehicleMarkersWithActiveTrip[i].setLatLng([startStop.lat, startStop.lon]); //move the marker to the start of the next trip
+  
+              // Remove path and marker from current arrays, but don't remove marker from map
+              tripPaths.splice(i, 1);
+              vehicleMarkersWithActiveTrip.splice(i, 1);
+              console.log(`trip ${finishedTrip.trip_id} turning back into trip ${nextTrip.trip_id} at ${simulationTime}`);
+              continue;
+            }
           }
         }
         // No next trip: remove marker and path
         map.removeLayer(vehicleMarkersWithActiveTrip[i]);
         allVehicleMarkers = allVehicleMarkers.filter(m => m !== vehicleMarkersWithActiveTrip[i]); //remove from allVehicleMarkers        
+        console.log(`trip ${finishedTrip.trip_id} removed at ${simulationTime}. There are ${vehicleMarkersWithActiveTrip.length} active trips and ${allVehicleMarkers.length} total trips`);
         vehicleMarkersWithActiveTrip.splice(i, 1);
         tripPaths.splice(i, 1);
         continue;
@@ -635,12 +659,12 @@ function UpdateVehiclePositions(){
     if (!remainingTrips.length && tripPaths.every(path => path[path.length - 1].time <= simulationTime)) {
       stopAnimation();
     }
+
+    console.log(`at time ${simulationTime}. There are ${vehicleMarkersWithActiveTrip.length} active trips and ${allVehicleMarkers.length} total trips`);
   }
 
 
 function stopAnimation() {  
-  allVehicleMarkers = [];
-  updateTripPlot(simulationTime, allVehicleMarkers.length); // Final update to trip plot
 
   // 1) Clear the running interval
   if (animationTimer) {
@@ -654,6 +678,8 @@ function stopAnimation() {
       map.removeLayer(marker);
     }
   });
+  allVehicleMarkers = [];
+  updateTripPlot(simulationTime, allVehicleMarkers.length); // Final update to trip plot
 
   // 3) Reset all trip/animation state
   tripPaths = [];
@@ -811,12 +837,12 @@ function initTripPlot() {
 }
 
 function updateTripPlot(currentTime, activeTripsCount) {
-  // Only record if at least 60 seconds since last record
   const lastTime = tripPlotData.labels.length > 0
-    ? timeToSeconds(tripPlotData.labels[tripPlotData.labels.length - 1])
-    : null;
-
-  if (lastTime === null || currentTime - lastTime >= 60) {
+  ? timeToSeconds(tripPlotData.labels[tripPlotData.labels.length - 1])
+  : null;
+  
+  // Only record if at least 60 seconds since last record
+  if (lastTime === null || currentTime - lastTime >= 60 || activeTripsCount === 0) {
     const timeLabel = formatTime(currentTime);
     tripPlotData.labels.push(timeLabel);
     tripPlotData.datasets[0].data.push(activeTripsCount);
