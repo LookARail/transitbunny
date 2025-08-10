@@ -38,33 +38,6 @@ function generateRouteStatsTable(filteredTrips, shapes, stops, stopTimes, routes
     stats[routeName][trip.shape_id].push(trip);
   });
 
-  // Helper: calculate shape distance
-  function shapeDistance(shapePts) {
-    //Sort by shape_pt_sequence
-    shapePts.sort((a, b) => a.shape_pt_sequence - b.shape_pt_sequence);
-
-    // Check for shape_dist_traveled values
-    const traveledValues = shapePts
-        .map(pt => pt.shape_dist_traveled)
-        .filter(val => val !== undefined && val !== null);
-
-    if (traveledValues.length > 0) {
-        //If available, return the maximum value
-        //console.log(`For shapeID ${shapePts[0].shape_id} Using shape_dist_traveled values:`, Math.max(...traveledValues));
-        return Math.max(...traveledValues);
-    } else {
-        //Otherwise, calculate manually
-        let dist = 0;
-        for (let i = 1; i < shapePts.length; i++) {
-        dist += 0.001 * calculateDistance(
-            shapePts[i - 1].lat, shapePts[i - 1].lon,
-            shapePts[i].lat, shapePts[i].lon
-        ); // Convert to kilometers
-        }
-        return dist;
-    }
-  }
-
   // Helper: get first/last station for a trip
   function getFirstLastStations(trip) {
     //console.log(`For trip${trip.trip_id}. Trying to find first and last stations.`);
@@ -202,6 +175,33 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
   const dLon = toRad(lon2 - lon1);
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Helper: calculate shape distance
+function shapeDistance(shapePts) {
+  //Sort by shape_pt_sequence
+  shapePts.sort((a, b) => a.shape_pt_sequence - b.shape_pt_sequence);
+
+  // Check for shape_dist_traveled values
+  const traveledValues = shapePts
+      .map(pt => pt.shape_dist_traveled)
+      .filter(val => val !== undefined && val !== null);
+
+  if (traveledValues.length > 0) {
+      //If available, return the maximum value
+      //console.log(`For shapeID ${shapePts[0].shape_id} Using shape_dist_traveled values:`, Math.max(...traveledValues));
+      return Math.max(...traveledValues);
+  } else {
+      //Otherwise, calculate manually
+      let dist = 0;
+      for (let i = 1; i < shapePts.length; i++) {
+      dist += 0.001 * calculateDistance(
+          shapePts[i - 1].lat, shapePts[i - 1].lon,
+          shapePts[i].lat, shapePts[i].lon
+      ); // Convert to kilometers
+      }
+      return dist;
+  }
 }
 
 

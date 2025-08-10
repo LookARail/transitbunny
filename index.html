@@ -10,76 +10,119 @@
 </head>
 <body>
   <div id="map"></div>
-  <div id="tripPlotContainer">
-    <canvas id="tripPlot"></canvas>
-  </div>
 
-<div id="statisticsContainer">
-<div style="display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 12px;">
-    <h2 style="margin:0 0 10px 0; font-size:1.15rem;">Route Statistics</h2>
-    <button id="GenerateStat" style="margin-bottom:12px; width:240px;">Generate Statistics</button>
-    <button id="DownloadStat" style="margin-bottom:12px;">Download CSV</button>
+<div id="controls" >
+  <div class="main-menu-title">GTFS Data Sorce:</div>
+  <span id="dataSourceText" style="font-size:0.98em; color:#0078d7; margin-bottom:0px; display:block;">
+    Default - Vancouver GTFS Data 2025-08-08
+  </span>
+  <div class="main-menu-upload">
+    <button id="uploadGtfsBtn"><span style="font-size:1.2em;">📁</span> Upload My Own GTFS ZIP</button>
+    <input type="file" id="gtfsFileInput" accept=".zip" style="display:none" />
+    <div id="progressBarContainer" style="display:none;">
+      <div id="progressBar"></div>
+    </div>
   </div>
-  <div id="routeStatsTableWrapper">
-    <div id="routeStatsTable"></div>
+  
+  <div class="main-menu-title">Trip Filters</div>
+  <div class="main-menu-filters">
+    <!-- Route Type Filter -->
+    <label>
+      <span class="tooltip">
+        Route Type:
+        <span class="tooltiptext">
+          Route Type Typically has the following nomenclature:<br>1 = Subway/Metro<br>2 = Rail<br>3 = Bus<br>4 = Ferry<br>MultiSelect is available
+        </span>
+      </span>
+      <select id="routeTypeSelect" multiple size="4" style="min-width: 120px;"></select>
+    </label>
+    <!-- Route Name Filter -->
+    <label>
+      <span class="tooltip">
+        Route Name:
+        <span class="tooltiptext">
+          Route Name is the name of the route, such as "Red Line" or "180".<br>MultiSelect is available
+        </span>
+      </span>
+      <select id="routeShortNameSelect" multiple size="4" style="min-width: 120px; max-width: 300px;"></select>
+    </label>
+    <!-- Service Pattern ID Filter -->
+    <label>
+      <span class="tooltip">
+        Service Pattern ID:    
+        <span class="tooltiptext">
+          Service Pattern ID is a unique identifier for the service pattern defined in the Calendar or Calendar_date file.<br>MultiSelect is available
+        </span>
+      </span>
+      <select id="serviceIdSelect" multiple size="4" style="min-width: 120px;"></select>
+    </label>
+    <button id="updateMapBtn" style="margin-top:12px;">Update Map</button>
   </div>
 </div>
 
-  <div id="controls">
-  <input type="file" id="gtfsFileInput" accept=".zip" style="display:none" />
-  <button id="uploadGtfsBtn">Upload GTFS ZIP</button>
-
-  <div id="progressBarContainer" style="width:100%;margin-bottom:10px;display:none;">
-    <div id="progressBar" style="height:18px;width:0%;background:#0078d7;border-radius:6px;transition:width 0.3s;"></div>
+<!-- Animation Controls Canvas -->
+<div id="animationCanvas" class="floating-canvas" style="display:none;">
+  <div class="canvas-header">Animation Controls</div>
+  <div class="canvas-content">
+    <div class="row-controls">
+      <label for="speedSelect">Speed:</label>
+      <select id="speedSelect">
+        <option value="1">1x</option>
+        <option value="10" selected>10x</option>
+        <option value="60">60x</option>
+        <option value="300">300x</option>
+      </select>
+      <span id="timeDisplay">00:00:00</span>
+    </div>
+    <div class="row-buttons">
+      <button id="playBtn">▶️ Play</button>
+      <button id="pauseButton"> ⏯️ Pause</button>
+      <button id="stopBtn">⏹️ Stop</button>
+    </div>
   </div>
-  
-  <label>
-    <span class="tooltip">
-      Route Type:
-      <span class="tooltiptext">
-        Route Type Typically has the following nomenclature:<br>1 = Subway/Metro<br>2 = Rail<br>3 = Bus<br>4 = Ferry<br>MultiSelect is available
-      </span>
-    </span>
-    <select id="routeTypeSelect" multiple size="4" style="min-width:120px;"></select>
-  </label>
-
-  <label>
-    <span class="tooltip">
-      Route Name:
-      <span class="tooltiptext">
-        Route Name is the name of the route, such as "Red Line" or "180".<br>MultiSelect is available
-      </span>
-    </span>
-    <select id="routeShortNameSelect" multiple size="4" style="min-width:120px;"></select>
-  </label>
-
-  <label>
-    <span class="tooltip">
-      Service Pattern ID:    
-      <span class="tooltiptext">
-        Service Pattern ID is a unique identifier for the service pattern defined in the Calendar or Calendar_date file.<br>MultiSelect is available
-      </span>
-    </span>
-    <select id="serviceIdSelect" multiple size="4" style="min-width:120px;"></select>
-  </label>
+</div>
 
 
-  <div class="row-controls">
-    <label for="speedSelect" style="margin-bottom:0;">Speed:</label>
-    <select id="speedSelect">
-      <option value="1"> 1x</option>
-      <option value="10" selected> 10x</option>
-      <option value="60">60x</option>
-      <option value="300">300x</option>
-    </select>
-    <span id="timeDisplay" style="margin-left: 10px; font-weight: bold;">00:00:00</span>
+  <!-- Graphs Canvas with Tabs -->
+<div id="graphsCanvas" class="floating-canvas" style="display:none;">
+  <div class="canvas-header">
+    <button class="tab-btn active" data-tab="tripPlotTab"># of Trips</button>
+    <button class="tab-btn" data-tab="vehKmPlotTab">Vehicle-Kilometer</button>
   </div>
-
-  <div class="row-buttons">
-    <button id="playBtn">▶️ Play</button>
-    <button id="pauseButton">Pause</button>
-    <button id="stopBtn">⏹️ Stop</button>
+  <div class="canvas-content">
+    <div id="tripPlotTab" class="tab-content active">
+      <canvas id="tripPlot"></canvas>
+    </div>
+    <div id="vehKmPlotTab" class="tab-content">
+      <canvas id="vehKmPlot"></canvas>
+    </div>
   </div>
+</div>
+
+<!-- Statistics Canvas with Tabs -->
+<div id="statsCanvas" class="floating-canvas" style="display:none;">
+  <div class="canvas-header">
+    <button class="tab-btn active" data-tab="routeStatsTab">Route Statistics</button>
+    <!-- Future stats tabs go here -->
+  </div>
+  <div class="canvas-content">
+    <div id="routeStatsTab" class="tab-content active">
+      <button id="GenerateStat">Generate Statistics</button>
+      <button id="DownloadStat">Download CSV</button>
+      <div id="routeStatsTableWrapper">
+        <div id="routeStatsTable"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Ribbon/Taskbar at bottom -->
+<div id="ribbonPanel">
+  <button class="ribbon-icon" data-canvas="animationCanvas" title="Animation Controls">▶️</button>
+  <button class="ribbon-icon" data-canvas="graphsCanvas" title="Graphs">📈</button>
+  <button class="ribbon-icon" data-canvas="statsCanvas" title="Statistics">📊</button>
+  <button class="ribbon-icon" data-canvas="" title="Future Feature">⭐</button>
+</div>
 
   <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>

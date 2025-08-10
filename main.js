@@ -43,6 +43,8 @@ let speedMultiplier = 10;
 const map = L.map('map').setView([0, 0], 13);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
+let vehKmPendingPoints = {}; // { route_id: [{ x, y }], ... }
+
 async function loadGtfsFromWebZip() {
   const url = 'gtfs.zip';
   try {
@@ -518,6 +520,14 @@ function initializeAnimation() {
   if (tripPlotChart) tripPlotChart.update();
   hourTicks = [];
 
+  //clear the vehicle km chart data
+  vehKmData = {};
+  if (vehKmChart) {
+    vehKmChart.data.datasets = [];
+    vehKmChart.options.scales.x.min = undefined;
+    vehKmChart.update();
+  }
+
   if (!filteredTrips.length) { alert('No trips match filters'); return; }
 // compute startTime for filtered trips and find earliest
 
@@ -564,6 +574,7 @@ function startAnimation() {
       updateTripPlot(simulationTime, allVehicleMarkers.length);
       document.getElementById('timeDisplay').textContent = formatTime(simulationTime);
       UpdateVehiclePositions();
+      flushVehKmPendingPoints();
     }, FRAME_INTERVAL_MS);
 }
 
@@ -580,15 +591,12 @@ function UpdateVehiclePositions(){
             vehicleMarkersWithActiveTrip.push(t._inheritedMarker);
             if(!allVehicleMarkers.includes(t._inheritedMarker)) {
               allVehicleMarkers.push(t._inheritedMarker);
-              console.log(`ALERT: Trip ${t.trip_id} added at ${simulationTime} from previous trip but previous marker not stored`);
             }else{
-              console.log(`Trip ${t.trip_id} added at ${simulationTime} inheriting marker from previous trip`);
             }
           } else {
             const m = L.circleMarker([path[0].lat, path[0].lon], { radius: 6, color: 'green', fillColor: 'green', fillOpacity: 1 }).addTo(map);
             allVehicleMarkers.push(m);
             vehicleMarkersWithActiveTrip.push(m);
-            console.log(`Trip ${t.trip_id} added at ${simulationTime} - A new trip`);
           }
         }
         return false;
@@ -605,6 +613,16 @@ function UpdateVehiclePositions(){
         const finishedTrip =path.parentTrip;
         //console.log(`Trip ${finishedTrip.trip_id} finished at ${formatTime(endTime)}. Trying to find next connection`);
 
+        if (finishedTrip){
+            //update the veh-kilometer plot
+            const shapePts = shapes.filter(s => s.shape_id === finishedTrip.shape_id);
+            let tripDistanceKm = 0;
+            if (shapePts.length > 1) {
+              tripDistanceKm = shapeDistance(shapePts);
+            }
+            updateVehKmOnTripFinish(finishedTrip, tripDistanceKm, endTime);
+        }
+
         if (finishedTrip && finishedTrip.block_id) {
           const tripsForBlock = blockIdTripMap[finishedTrip.block_id] || [];
           // Find the next trip with startTime > endTime
@@ -618,7 +636,7 @@ function UpdateVehiclePositions(){
                     
             const dist = calculateDistance(endPos.lat, endPos.lon, startStop.lat, startStop.lon);
             const layover = nextTrip.startTime - endTime;
-            if (dist > 400 || layover > 7200) {
+            if ((dist > 400 || layover > 7200) && (dist / layover > 5)) {
               let msg = `Block ${finishedTrip.block_id} involving trips ${finishedTrip.trip_id} and ${nextTrip.trip_id}: Layover ${Math.round(layover / 60)} min, Distance ${Math.round(dist)} m`;
               msg += " ALERT: This is not considered a connection although the trips share the same block_id";
               console.log(msg);
@@ -630,16 +648,13 @@ function UpdateVehiclePositions(){
   
               // Remove path and marker from current arrays, but don't remove marker from map
               tripPaths.splice(i, 1);
-              vehicleMarkersWithActiveTrip.splice(i, 1);
-              console.log(`trip ${finishedTrip.trip_id} turning back into trip ${nextTrip.trip_id} at ${simulationTime}`);
-              continue;
+              vehicleMarkersWithActiveTrip.splice(i, 1);              continue;
             }
           }
         }
         // No next trip: remove marker and path
         map.removeLayer(vehicleMarkersWithActiveTrip[i]);
         allVehicleMarkers = allVehicleMarkers.filter(m => m !== vehicleMarkersWithActiveTrip[i]); //remove from allVehicleMarkers        
-        console.log(`trip ${finishedTrip.trip_id} removed at ${simulationTime}. There are ${vehicleMarkersWithActiveTrip.length} active trips and ${allVehicleMarkers.length} total trips`);
         vehicleMarkersWithActiveTrip.splice(i, 1);
         tripPaths.splice(i, 1);
         continue;
@@ -660,7 +675,6 @@ function UpdateVehiclePositions(){
       stopAnimation();
     }
 
-    console.log(`at time ${simulationTime}. There are ${vehicleMarkersWithActiveTrip.length} active trips and ${allVehicleMarkers.length} total trips`);
   }
 
 
@@ -692,7 +706,7 @@ function stopAnimation() {
 
   // 5) Reset pause button label
   const pauseButton = document.getElementById('pauseButton');
-  if (pauseButton) pauseButton.textContent = 'Pause';
+  if (pauseButton) pauseButton.textContent = '⏯️ Pause';
 }
 
 
@@ -724,14 +738,15 @@ function togglePauseResume(){
     clearInterval(animationTimer);
     animationTimer = null;
     console.log("Simulation paused.");
-    pauseButton.textContent = 'Resume';
-  }else{    
-    pauseButton.textContent = 'Pause';
+    pauseButton.textContent = '⏯️ Resume';
+  }else{
+    pauseButton.textContent = '⏯️ Pause';
       animationTimer = setInterval(() => {
       simulationTime += TIME_STEP_SEC * speedMultiplier;
       document.getElementById('timeDisplay').textContent = formatTime(simulationTime);
       UpdateVehiclePositions();
       updateTripPlot(simulationTime, allVehicleMarkers.length); // Add here too
+      flushVehKmPendingPoints();
     }, FRAME_INTERVAL_MS);
   }
 }
@@ -752,10 +767,12 @@ function hideProgressBar() {
   document.getElementById('progressBarContainer').style.display = 'none';
 }
 
+
+
 // === Run on Load ===
 window.addEventListener('DOMContentLoaded', () => {
   loadGtfsFromWebZip();
-
+  
   document.getElementById('routeTypeSelect');
   document.getElementById('serviceIdSelect');
   document.getElementById('playBtn').addEventListener('click', () => {
@@ -764,22 +781,107 @@ window.addEventListener('DOMContentLoaded', () => {
     startAnimation();
   });
 
+  document.getElementById('uploadGtfsBtn').addEventListener('click', () => {
+    document.getElementById('gtfsFileInput').click();
+  });
   document.getElementById('pauseButton').addEventListener('click', togglePauseResume);
   document.getElementById('stopBtn').addEventListener('click', stopAnimation);
   document.getElementById('speedSelect').addEventListener('change', changeAnimationSpeed);
 
-  document.getElementById('uploadGtfsBtn').addEventListener('click', () => {
-    document.getElementById('gtfsFileInput').click();
+  document.getElementById('updateMapBtn').addEventListener('click', function() {
+    // Use the same logic as at the start of simulation
+    stopAnimation();
+    filterStopsAndShapesForTrips(filteredTrips);
   });
 
   document.getElementById('gtfsFileInput').addEventListener('change', (event) => {
     const file = event.target.files[0];
     if (file) {
       loadGtfsFromUserUploadZip(file);
+      document.getElementById('dataSourceText').textContent = file.name;
     }
-  });
+  });  
   initTripPlot();
+  setupVehKmPlot();
+
+  // Ribbon icon toggle logic (not mutually exclusive)
+  document.querySelectorAll('.ribbon-icon').forEach(btn => {
+    btn.addEventListener('click', function() {
+      const canvasId = this.getAttribute('data-canvas');
+      if (!canvasId) return;
+
+      const canvas = document.getElementById(canvasId);
+      const isActive = this.classList.contains('active');
+
+      // Toggle active state and canvas visibility
+      if (isActive) {
+        this.classList.remove('active');
+        if (canvas) canvas.style.display = 'none';
+      } else {
+        this.classList.add('active');
+        if (canvas) canvas.style.display = 'flex';
+      }
+    });
+  });
+
+  // Tab logic for graphs and stats
+  document.querySelectorAll('.canvas-header').forEach(header => {
+    header.querySelectorAll('.tab-btn').forEach(tabBtn => {
+      tabBtn.addEventListener('click', function() {
+        // Remove active from all tabs in this header
+        header.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        // Hide all tab-contents in this canvas
+        const canvas = header.parentElement;
+        canvas.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
+        // Activate this tab
+        this.classList.add('active');
+        const tabId = this.getAttribute('data-tab');
+        canvas.querySelector(`#${tabId}`).classList.add('active');
+      });
+    });
+  });
+
+  // open the first canvas by default
+  document.querySelector('.ribbon-icon[data-canvas="animationCanvas"]').click();
+
+  // Make the #graphsCanvas and #statsCanvas draggable
+  ['graphsCanvas', 'statsCanvas'].forEach(canvasId => {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    const header = canvas.querySelector('.canvas-header');
+    if (!header) return;
+
+    header.style.cursor = 'move';
+    let offsetX = 0, offsetY = 0, isDragging = false;
+
+    header.addEventListener('mousedown', function(e) {
+      isDragging = true;
+      const rect = canvas.getBoundingClientRect();
+      offsetX = e.clientX - rect.left;
+      offsetY = e.clientY - rect.top;
+      canvas.style.zIndex = 3000;
+      document.body.style.userSelect = 'none';
+    });
+
+    document.addEventListener('mousemove', function(e) {
+      if (!isDragging) return;
+      canvas.style.left = (e.clientX - offsetX) + 'px';
+      canvas.style.top = (e.clientY - offsetY) + 'px';
+      canvas.style.right = 'auto';
+      canvas.style.bottom = 'auto';
+      canvas.style.position = 'fixed';
+    });
+
+    document.addEventListener('mouseup', function() {
+      if (isDragging) {
+        isDragging = false;
+        document.body.style.userSelect = '';
+        setTimeout(() => { canvas.style.zIndex = 1500; }, 200);
+      }
+    });
+  });
 });
+
 
 //#region Trip Plotting
 let tripPlotChart = null;
@@ -788,7 +890,7 @@ let hourTicks = []; // Track which hour ticks have been added
 let tripPlotData = {
   labels: [],
   datasets: [{
-    label: 'Active Trips',
+    label: 'Cumulative Number of Trips',
     data: [],
     fill: true,
     backgroundColor: 'rgba(0,120,215,0.2)',
@@ -819,7 +921,7 @@ function initTripPlot() {
           }
         },
         y: {
-          title: { display: true, text: 'Active Trips' },
+          title: { display: true, text: 'Cumulative Number of Trips' },
           beginAtZero: true,
           ticks: {
             stepSize: 1,
@@ -830,7 +932,8 @@ function initTripPlot() {
         }
       },
       plugins: {
-        legend: { display: false }
+        legend: { display: false },
+        title: { text: 'Number of Trips', display: true, font: { size: 14 } }
       }
     }
   });
@@ -869,4 +972,137 @@ function updateTripPlot(currentTime, activeTripsCount) {
     tripPlotChart.update();
   }
 }
+
+
+
+// --- Vehicle-Kilometer Plot Setup ---
+const vehKmColors = [
+  "#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00",
+  "#ffff33", "#a65628", "#f781bf", "#999999", "#1b9e77"
+];
+let vehKmChart;
+let vehKmData = {}; // { route_id: { label, color, data: [{x, y}], total } }
+let vehKmTime = 0;  // Current simulation time in seconds
+
+function setupVehKmPlot() {
+  const ctx = document.getElementById('vehKmPlot').getContext('2d');
+  vehKmChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      datasets: []
+    },
+    options: {
+      responsive: true,
+      animation: false,
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top',
+          labels: { color: '#222', font: { weight: 'bold' } }
+        },
+        title: {
+          display: true,
+          text: 'Cumulative Vehicle-Kilometers by Route',
+          font: { size: 14 }
+        }
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          title: { display: true, text: 'Animation Time (s)' },
+          min: undefined, // will be set dynamically
+          ticks: {
+            // Only show ticks at whole hours
+            stepSize: 3600,
+            callback: function(value) {
+              // Only show label if value is a whole hour
+              if (value % 3600 === 0) {
+                const h = Math.floor(value / 3600).toString().padStart(2, '0');
+                return `${h}:00`;
+              }
+              return '';
+            }
+          }
+        },
+        y: {
+          title: { display: true, text: 'Cumulative Vehicle-Kilometers' }
+        }
+      }
+    }
+  });
+}
+
+function updateVehKmOnTripFinish(trip, tripDistanceKm, simTime) {
+  // Only track top 10 routes by cumulative km
+  const routeId = trip.route_id;
+  if (!vehKmData[routeId]) {
+    const colorIdx = Object.keys(vehKmData).length % vehKmColors.length;
+    vehKmData[routeId] = {
+      label: getRouteLabel(routeId),
+      color: vehKmColors[colorIdx],
+      data: [],
+      total: 0
+    };
+  }
+
+  // Buffer the tripDistanceKm and simTime
+  if (!vehKmPendingPoints[routeId]) vehKmPendingPoints[routeId] = [];
+  vehKmPendingPoints[routeId].push({ x: simTime, distance: tripDistanceKm });
+}
+
+function flushVehKmPendingPoints() {
+  Object.entries(vehKmPendingPoints).forEach(([routeId, points]) => {
+    // Sort points by x (time)
+    points.sort((a, b) => a.x - b.x);
+    let routeObj = vehKmData[routeId];
+    if (!routeObj) return;
+    // Start from the last total
+    let total = routeObj.data.length > 0 ? routeObj.data[routeObj.data.length - 1].y : 0;
+    points.forEach(pt => {
+      total += pt.distance;
+      routeObj.data.push({ x: pt.x, y: total });
+    });
+    routeObj.total = total;
+  });
+  vehKmPendingPoints = {};
+
+  // Keep only top 10 by total
+  let sorted = Object.entries(vehKmData)
+    .sort((a, b) => b[1].total - a[1].total)
+    .slice(0, 10);
+
+  vehKmChart.data.datasets = sorted.map(([routeId, obj]) => ({
+    label: obj.label,
+    data: obj.data,
+    borderColor: obj.color,
+    backgroundColor: obj.color,
+    fill: false,
+    tension: 0.1
+  }));
+
+  // Find the minimum x value among all datasets
+  let minX = Infinity;
+  vehKmChart.data.datasets.forEach(ds => {
+    if (ds.data.length > 0) {
+      const firstX = ds.data[0].x;
+      if (firstX < minX) minX = firstX;
+    }
+  });
+  if (minX !== Infinity) {
+    vehKmChart.options.scales.x.min = Math.floor(minX / 3600) * 3600;
+  }
+  vehKmChart.update();
+}
+
+// Helper to get route label (short or long name)
+function getRouteLabel(routeId) {
+  const route = routes.find(r => r.route_id === routeId);
+  if (!route) return routeId;
+  // Show "short name - long name" (like in filters)
+  if (route.route_short_name && route.route_long_name) {
+    return `${route.route_short_name} - ${route.route_long_name}`;
+  }
+  return route.route_short_name || route.route_long_name || route.route_id;
+}
+
 //#endregion
