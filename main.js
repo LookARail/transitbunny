@@ -890,7 +890,7 @@ let hourTicks = []; // Track which hour ticks have been added
 let tripPlotData = {
   labels: [],
   datasets: [{
-    label: 'Cumulative Number of Trips',
+    label: 'Number of Active Trips',
     data: [],
     fill: true,
     backgroundColor: 'rgba(0,120,215,0.2)',
@@ -921,7 +921,7 @@ function initTripPlot() {
           }
         },
         y: {
-          title: { display: true, text: 'Cumulative Number of Trips' },
+          title: { display: true, text: 'Number of Active Trips' },
           beginAtZero: true,
           ticks: {
             stepSize: 1,
