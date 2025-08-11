@@ -841,11 +841,19 @@ window.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  // Close button logic
+  document.getElementById('closeHelpBtn').onclick = function() {
+    document.getElementById('helpCanvas').style.display = 'none';
+    // Also deactivate the ribbon icon if needed
+    document.querySelectorAll('.ribbon-icon[data-canvas="helpCanvas"]').forEach(btn => btn.classList.remove('active'));
+  };
+
   // open the first canvas by default
   document.querySelector('.ribbon-icon[data-canvas="animationCanvas"]').click();
+  document.querySelector('.ribbon-icon[data-canvas="helpCanvas"]').click();
 
-  // Make the #graphsCanvas and #statsCanvas draggable
-  ['graphsCanvas', 'statsCanvas'].forEach(canvasId => {
+  // Make some of the canvas draggable
+  ['graphsCanvas', 'statsCanvas', 'helpCanvas'].forEach(canvasId => {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
     const header = canvas.querySelector('.canvas-header');

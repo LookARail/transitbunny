@@ -418,6 +418,28 @@
 .tab-content { display: none; }
 .tab-content.active { display: block; }
 
+#helpCanvas.floating-canvas {
+  right: 32px;
+  bottom: 80px; /* above the ribbon */
+  width: 600px;
+  max-width: 96vw;
+  max-height: 60vh;
+}
+
+#helpCanvas .canvas-content {
+  font-size: 1.05em;
+  line-height: 1.6;
+}
+#helpCanvas ul {
+  margin-left: 1.2em;
+  margin-bottom: 1em;
+}
+#helpCanvas h3, #helpCanvas h4 {
+  margin-top: 0.5em;
+  margin-bottom: 0em;
+  color: #0078d7;
+}
+
 @media (max-width: 900px) {
   .main-menu-panel {
     left: 2vw;
@@ -435,8 +457,6 @@
     max-width: unset;
   }
 
-  #graphsCanvas.floating-canvas { top: 10px; }
-  #animationCanvas.floating-canvas { bottom: 70px; }
 
   .floating-canvas {
     width: 98vw;

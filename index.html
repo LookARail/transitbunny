@@ -17,7 +17,7 @@
     Default - Vancouver GTFS Data 2025-08-08
   </span>
   <div class="main-menu-upload">
-    <button id="uploadGtfsBtn"><span style="font-size:1.2em;">📁</span> Upload My Own GTFS ZIP</button>
+    <button id="uploadGtfsBtn"><span style="font-size:1.2em;">📁</span> Load My Own GTFS ZIP</button>
     <input type="file" id="gtfsFileInput" accept=".zip" style="display:none" />
     <div id="progressBarContainer" style="display:none;">
       <div id="progressBar"></div>
@@ -116,11 +116,39 @@
   </div>
 </div>
 
+<div id="helpCanvas" class="floating-canvas" style="display:none; max-width: 700px;">
+  <div class="canvas-header">
+    Help &amp; Instructions
+    <button id="closeHelpBtn" style="margin-left:auto; background:none; border:none; color:#fff; font-size:1.3em; cursor:pointer;">✖</button>
+  </div>
+  <div class="canvas-content" style="overflow-y:auto; max-height: 60vh;">
+    <h3>Welcome to the GTFS Web Client!</h3>
+    <ul>
+      <li><b>Load GTFS Data:</b> Click <b>Load My Own GTFS ZIP</b> to load your transit data. The page is pre-loaded with the default Vancouver GTFS dataset. The file format must be a ".zip" file containing standard static GTFS files such as "routes.txt", "trips.txt", and others</li>
+      <li><b>Filter Trips:</b> Use the filters to select route types, route names, and service patterns. Hover over the <b>filter labels</b> for more details. Click <b>Update Map</b> to update the map to match your selection </li>
+      <li><b>Animation Controls:</b> Open the <b>Animation Controls</b> panel (▶️) to play, pause, or stop the animation. Adjust the speed as needed</li>
+      <li><b>Graphs:</b> Open the <b>Graphs</b> panel (📈) with these graph options. <b>Graphs update in sync with the animation progress</b>
+        <ul>
+          <li><b>Number of Trips:</b> Shows the number of active trips over time</li>
+          <li><b>Vehicle-Kilometer:</b> Shows cumulative vehicle-kilometers by route</li>
+        </ul>
+      </li>
+      <li><b>Statistics:</b> Open the <b>Statistics</b> panel (📊) for route-level stats. You can download the table as CSV. The statistics are independent from the animation progress</li>
+    </ul>
+    <p style="font-size:0.95em; color:#2400f3;">
+      Want more helps or features? Contact me on
+      <a href="https://www.linkedin.com/in/luke-li-05445086/" target="_blank" style="color:#0078d7; text-decoration:underline;">LinkedIn</a>.
+      - Luke Li
+    </p>
+    <img src="barcode_linkedin_lukeli.jpg" alt="Barcode" style="display:block; margin: 18px auto 0 auto; max-width:220px;">  </div>
+</div>
+
 <!-- Ribbon/Taskbar at bottom -->
 <div id="ribbonPanel">
   <button class="ribbon-icon" data-canvas="animationCanvas" title="Animation Controls">▶️</button>
   <button class="ribbon-icon" data-canvas="graphsCanvas" title="Graphs">📈</button>
   <button class="ribbon-icon" data-canvas="statsCanvas" title="Statistics">📊</button>
+  <button class="ribbon-icon" data-canvas="helpCanvas" title="Help">❓</button>
   <button class="ribbon-icon" data-canvas="" title="Future Feature">⭐</button>
 </div>
 
