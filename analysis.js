@@ -187,10 +187,13 @@ function shapeDistance(shapePts) {
       .map(pt => pt.shape_dist_traveled)
       .filter(val => val !== undefined && val !== null);
 
-  if (traveledValues.length > 0) {
+  // Only use shape_dist_traveled if there are non-zero values
+  const nonZeroTraveled = traveledValues.filter(val => val > 0);
+
+  if (nonZeroTraveled.length > 0) {
       //If available, return the maximum value
-      //console.log(`For shapeID ${shapePts[0].shape_id} Using shape_dist_traveled values:`, Math.max(...traveledValues));
-      return Math.max(...traveledValues);
+      //console.log(`For shapeID ${shapePts[0].shape_id} Using shape_dist_traveled values:`, Math.max(...nonZeroTraveled));
+      return Math.max(...nonZeroTraveled);
   } else {
       //Otherwise, calculate manually
       let dist = 0;

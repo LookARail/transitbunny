@@ -209,7 +209,7 @@ function parseStops(text) {
   }
 
   return lines.slice(1).map(row => {
-    const cols = row.split(',');
+    const cols = row.split(',').map(col => col.trim()); 
     return {
       id: cols[idIndex],
       name: cols[nameIndex],
@@ -239,7 +239,7 @@ function parseShapes(text) {
   }
 
   return lines.slice(1).map(row => {
-    const cols = row.split(',');
+    const cols = row.split(',').map(col => col.trim());
     return {
       shape_id: cols[shapeIDIndex],
       lat: parseFloat(cols[shapeLatIndex]),
@@ -290,7 +290,7 @@ function parseTrips(text) {
   }
 
   return lines.slice(1).map(row => {
-    const cols = row.split(',');
+    const cols = row.split(',').map(col => col.trim());
     return {
       route_id: cols[routeIdIndex],
       service_id: cols[serviceIdIndex],
@@ -302,15 +302,33 @@ function parseTrips(text) {
 }
 
 function parseStopTimes(text) {
-  const rows = text.trim().split('\n').slice(1);
-  return rows.map(row => {
-    const [trip_id, arrival_time, departure_time, stop_id, stop_sequence] = row.split(',');
+  const lines = text.trim().split('\n');
+  const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+
+  const tripIdIndex = headers.indexOf('trip_id');
+  const arrivalTimeIndex = headers.indexOf('arrival_time');
+  const departureTimeIndex = headers.indexOf('departure_time');
+  const stopIdIndex = headers.indexOf('stop_id');
+  const stopSequenceIndex = headers.indexOf('stop_sequence');
+
+  if (
+    tripIdIndex === -1 ||
+    arrivalTimeIndex === -1 ||
+    departureTimeIndex === -1 ||
+    stopIdIndex === -1 ||
+    stopSequenceIndex === -1
+  ) {
+    throw new Error('Missing required columns in stop_times.txt');
+  }
+
+  return lines.slice(1).map(row => {
+    const cols = row.split(',').map(col => col.trim());
     return {
-      trip_id,
-      stop_id,
-      arrival_time,
-      departure_time,
-      stop_sequence: parseInt(stop_sequence)
+      trip_id: cols[tripIdIndex],
+      arrival_time: cols[arrivalTimeIndex],
+      departure_time: cols[departureTimeIndex],
+      stop_id: cols[stopIdIndex],
+      stop_sequence: parseInt(cols[stopSequenceIndex])
     };
   });
 }
@@ -408,6 +426,8 @@ function filterStopsAndShapesForTrips(tripsToShow) {
 
   stopsLayer  = L.layerGroup();
   shapesLayer = L.layerGroup();
+
+console.log(`filtered trip count: ${tripsToShow.length}`);
 
   const usedStops  = new Set();
   const usedShapes = new Set();
@@ -1053,6 +1073,7 @@ function updateVehKmOnTripFinish(trip, tripDistanceKm, simTime) {
     };
   }
 
+ 
   // Buffer the tripDistanceKm and simTime
   if (!vehKmPendingPoints[routeId]) vehKmPendingPoints[routeId] = [];
   vehKmPendingPoints[routeId].push({ x: simTime, distance: tripDistanceKm });
