@@ -85,6 +85,17 @@ async function LoadGTFSZipFile(zipFile) {
     clearAllMapLayersAndMarkers();
     const decoder = new TextDecoder();
 
+    // Check file sizes before decoding
+    const maxSize = 250 * 1024 * 1024; // 250 MB in bytes
+    for (const fname of ['stops.txt', 'routes.txt', 'trips.txt', 'shapes.txt', 'stop_times.txt']) {
+      const arr = zipFile[fname];
+      if (arr && arr.length > maxSize) {
+        alert(`${fname} is too large (${(arr.length / (1024*1024)).toFixed(1)} MB). Please use a smaller GTFS file (max 250 MB per file).`);
+        hideProgressBar();
+        return;
+      }
+    }
+
     const stopsText = decoder.decode(zipFile['stops.txt']);
     const routesText = decoder.decode(zipFile['routes.txt']);
     setProgressBar(30);
@@ -285,8 +296,11 @@ function parseTrips(text) {
   const shapeIdIndex = headers.indexOf('shape_id');
   const blockIDIndex = headers.indexOf('block_id');
 
-  if (routeIdIndex === -1 || serviceIdIndex === -1 || tripIdIndex === -1 || blockIDIndex === -1) {
+  if (routeIdIndex === -1 || serviceIdIndex === -1 || tripIdIndex === -1) {
     throw new Error('Missing required columns in trips.txt');
+  }
+  if (blockIDIndex === -1) {
+    console.warn('block_id column not found in trips.txt. Vehicle animation will not connect trips by block.');
   }
 
   return lines.slice(1).map(row => {
@@ -302,7 +316,7 @@ function parseTrips(text) {
 }
 
 function parseStopTimes(text) {
-  const lines = text.trim().split('\n');
+  const lines = text.trim().split(/\r?\n/);
   const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
 
   const tripIdIndex = headers.indexOf('trip_id');
