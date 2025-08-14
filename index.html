@@ -86,8 +86,9 @@
   <!-- Graphs Canvas with Tabs -->
 <div id="graphsCanvas" class="floating-canvas" style="display:none;">
   <div class="canvas-header">
-    <button class="tab-btn active" data-tab="tripPlotTab"># of Trips</button>
+    <button class="tab-btn active" data-tab="tripPlotTab"># of Vehicles</button>
     <button class="tab-btn" data-tab="vehKmPlotTab">Vehicle-Kilometer</button>
+    <button class="tab-btn" data-tab="tripsPerHourTab">Trips/Hour</button>
   </div>
   <div class="canvas-content">
     <div id="tripPlotTab" class="tab-content active">
@@ -95,6 +96,11 @@
     </div>
     <div id="vehKmPlotTab" class="tab-content">
       <canvas id="vehKmPlot"></canvas>
+    </div>
+    <!-- trips per hour plot -->
+    <div id="tripsPerHourTab" class="tab-content">
+      <div id="tripsPerHourAnnotation" style="color: #b00; font-size: 0.85em; margin-bottom: 4px; display:none"></div>
+      <canvas id="tripsPerHourPlot" height="200"></canvas>
     </div>
   </div>
 </div>
@@ -129,7 +135,7 @@
       <li><b>Animation Controls:</b> Open the <b>Animation Controls</b> panel (▶️) to play, pause, or stop the animation. Adjust the speed as needed</li>
       <li><b>Graphs:</b> Open the <b>Graphs</b> panel (📈) with these graph options. <b>Graphs update in sync with the animation progress</b>
         <ul>
-          <li><b>Number of Trips:</b> Shows the number of active trips over time</li>
+          <li><b>Number of Trips:</b> Shows the number of active vehicles over time</li>
           <li><b>Vehicle-Kilometer:</b> Shows cumulative vehicle-kilometers by route</li>
         </ul>
       </li>

@@ -8,7 +8,7 @@ let trips = [];
 let stopTimes = [];
 
 let animationTimer = null;
-let simulationTime = null;
+let animationTime = null;
 let animationStartTime = null;
 let currentTrip = null;
 let remainingTrips = [];
@@ -115,6 +115,7 @@ async function LoadGTFSZipFile(zipFile) {
     await Promise.resolve();
 
     shapes = parseShapes(shapesText);
+    buildShapeIdToDistance();
     setProgressBar(80);
     await Promise.resolve();
 
@@ -145,7 +146,9 @@ async function LoadGTFSZipFile(zipFile) {
       if (!tripStopsMap[st.trip_id]) tripStopsMap[st.trip_id] = new Set();
       tripStopsMap[st.trip_id].add(st.stop_id);
     });
-    setProgressBar(98);
+
+
+   setProgressBar(98);
     await Promise.resolve();
 
     initializeTripsRoutes(trips, routes);
@@ -158,6 +161,19 @@ async function LoadGTFSZipFile(zipFile) {
   }
 }
 
+let shapeIdToDistance = {};
+function buildShapeIdToDistance() {
+  shapeIdToDistance = {};
+  // Group shape points by shape_id
+  const shapesById = {};
+  shapes.forEach(s => {
+    if (!shapesById[s.shape_id]) shapesById[s.shape_id] = [];
+    shapesById[s.shape_id].push(s);
+  });
+  Object.entries(shapesById).forEach(([shape_id, pts]) => {
+    shapeIdToDistance[shape_id] = shapeDistance(pts);
+  });
+}
 
 function clearAllMapLayersAndMarkers() {
   // Remove stops layer if present
@@ -201,7 +217,7 @@ function clearAllMapLayersAndMarkers() {
   shortAndLongNamesByType = {};
   shortNameToServiceIds = {};
   // Clear animation state
-  simulationTime = null;
+  animationTime = null;
   animationStartTime = null;
   currentTrip = null;
 }
@@ -295,13 +311,18 @@ function parseTrips(text) {
   const tripIdIndex = headers.indexOf('trip_id');
   const shapeIdIndex = headers.indexOf('shape_id');
   const blockIDIndex = headers.indexOf('block_id');
-
+  const directionIdIndex = headers.indexOf('direction_id');
+  
   if (routeIdIndex === -1 || serviceIdIndex === -1 || tripIdIndex === -1) {
     throw new Error('Missing required columns in trips.txt');
   }
   if (blockIDIndex === -1) {
     console.warn('block_id column not found in trips.txt. Vehicle animation will not connect trips by block.');
   }
+  if (directionIdIndex === -1) {
+    console.warn('direction_id column not found in trips.txt. Trips-per-hour graph will not be split by direction.');
+  }
+
 
   return lines.slice(1).map(row => {
     const cols = row.split(',').map(col => col.trim());
@@ -310,7 +331,8 @@ function parseTrips(text) {
       service_id: cols[serviceIdIndex],
       trip_id: cols[tripIdIndex],
       shape_id: shapeIdIndex !== -1 ? cols[shapeIdIndex] : undefined,
-      block_id: blockIDIndex !== -1 ? cols[blockIDIndex] : undefined
+      block_id: blockIDIndex !== -1 ? cols[blockIDIndex] : undefined,
+      direction_id: directionIdIndex !== -1 ? cols[directionIdIndex] : undefined
     };
   });
 }
@@ -440,8 +462,6 @@ function filterStopsAndShapesForTrips(tripsToShow) {
 
   stopsLayer  = L.layerGroup();
   shapesLayer = L.layerGroup();
-
-console.log(`filtered trip count: ${tripsToShow.length}`);
 
   const usedStops  = new Set();
   const usedShapes = new Set();
@@ -590,32 +610,45 @@ function initializeAnimation() {
   }
 
   vehicleMarkersWithActiveTrip = [];
-  simulationTime = Infinity;
+  animationTime = Infinity;
+  lastTripsPerHourUpdateHour = null;
+  tripsPerHourSeries = {};
 
   // determine earliest start time among remainingTrips
-  simulationTime = remainingTrips.reduce((min, t) => Math.min(min, t.startTime), Infinity);
+  animationTime = remainingTrips.reduce((min, t) => Math.min(min, t.startTime), Infinity);
 
-  if (simulationTime === Infinity) { alert('No valid stop times'); return; }
-  animationStartTime = simulationTime;
-  document.getElementById('timeDisplay').textContent = formatTime(simulationTime);
+  if (animationTime === Infinity) { alert('No valid stop times'); return; }
+  animationStartTime = animationTime;
+  document.getElementById('timeDisplay').textContent = formatTime(animationTime);
 }
 
 function startAnimation() {
-  if (simulationTime == null) return;
+  if (animationTime == null) return;
   if (animationTimer) return;
   animationTimer = setInterval(() => {
-      simulationTime += TIME_STEP_SEC * speedMultiplier;
-      updateTripPlot(simulationTime, allVehicleMarkers.length);
-      document.getElementById('timeDisplay').textContent = formatTime(simulationTime);
-      UpdateVehiclePositions();
-      flushVehKmPendingPoints();
-    }, FRAME_INTERVAL_MS);
+    UpdateAnimationOnAnimationTimeChange();
+  }, FRAME_INTERVAL_MS);
 }
+
+function UpdateAnimationOnAnimationTimeChange(){
+  animationTime += TIME_STEP_SEC * speedMultiplier;
+  updateTripPlot(animationTime, allVehicleMarkers.length);
+  document.getElementById('timeDisplay').textContent = formatTime(animationTime);
+  UpdateVehiclePositions();
+  flushVehKmPendingPoints();
+
+  const currentHour = Math.floor(animationTime / 3600);
+  if (lastTripsPerHourUpdateHour === null || currentHour > lastTripsPerHourUpdateHour) {
+    updateTripsPerHourPlotForHour(currentHour - 1); // Show stats for the previous hour
+    lastTripsPerHourUpdateHour = currentHour;
+  }
+}
+
 
 function UpdateVehiclePositions(){
     // activate trips whose startTime <= now
     remainingTrips = remainingTrips.filter(t=>{
-      if(t.startTime<=simulationTime) {
+      if(t.startTime<=animationTime) {
         const path = interpolateTripPath(t);
         path.parentTrip = t;  // Store reference to parent trip        
         if(path.length) {
@@ -642,7 +675,7 @@ function UpdateVehiclePositions(){
     for (let i = tripPaths.length - 1; i >= 0; i--) {
       const path = tripPaths[i];
       const endTime = path[path.length - 1].time;
-      if (simulationTime >= endTime) {
+      if (animationTime >= endTime) {
         // Trip finished: try to connect to next trip with same block_id
         const finishedTrip =path.parentTrip;
         //console.log(`Trip ${finishedTrip.trip_id} finished at ${formatTime(endTime)}. Trying to find next connection`);
@@ -694,10 +727,10 @@ function UpdateVehiclePositions(){
         continue;
       }
       // Animate marker as usual
-      const idx = timedIndex(simulationTime, path);
+      const idx = timedIndex(animationTime, path);
       if (idx >= 0 && idx < path.length - 1) {
         const a = path[idx], b = path[idx + 1];
-        const frac = (simulationTime - a.time) / (b.time - a.time);
+        const frac = (animationTime - a.time) / (b.time - a.time);
         const lat = a.lat + (b.lat - a.lat) * frac;
         const lon = a.lon + (b.lon - a.lon) * frac;
         vehicleMarkersWithActiveTrip[i].setLatLng([lat, lon]);
@@ -705,7 +738,7 @@ function UpdateVehiclePositions(){
     }
 
     // Stop when no trips remain and all animated complete
-    if (!remainingTrips.length && tripPaths.every(path => path[path.length - 1].time <= simulationTime)) {
+    if (!remainingTrips.length && tripPaths.every(path => path[path.length - 1].time <= animationTime)) {
       stopAnimation();
     }
 
@@ -727,7 +760,11 @@ function stopAnimation() {
     }
   });
   allVehicleMarkers = [];
-  updateTripPlot(simulationTime, allVehicleMarkers.length); // Final update to trip plot
+  updateTripPlot(animationTime, allVehicleMarkers.length); // Final update to trip plot
+
+    // append the final data point to the 
+  const nextHour = Math.ceil(animationTime / 3600);
+  updateTripsPerHourPlotForHour(nextHour-1);
 
   // 3) Reset all trip/animation state
   tripPaths = [];
@@ -735,9 +772,9 @@ function stopAnimation() {
   vehicleMarkersWithActiveTrip = [];
 
   // 4) Reset the clock
-  simulationTime = null;
+  animationTime = null;  
   document.getElementById('timeDisplay').textContent = '00:00:00';
-
+  
   // 5) Reset pause button label
   const pauseButton = document.getElementById('pauseButton');
   if (pauseButton) pauseButton.textContent = '⏯️ Pause';
@@ -776,11 +813,7 @@ function togglePauseResume(){
   }else{
     pauseButton.textContent = '⏯️ Pause';
       animationTimer = setInterval(() => {
-      simulationTime += TIME_STEP_SEC * speedMultiplier;
-      document.getElementById('timeDisplay').textContent = formatTime(simulationTime);
-      UpdateVehiclePositions();
-      updateTripPlot(simulationTime, allVehicleMarkers.length); // Add here too
-      flushVehKmPendingPoints();
+        UpdateAnimationOnAnimationTimeChange();
     }, FRAME_INTERVAL_MS);
   }
 }
@@ -837,6 +870,7 @@ window.addEventListener('DOMContentLoaded', () => {
   });  
   initTripPlot();
   setupVehKmPlot();
+  setupTripsPerHourPlot();
 
   // Ribbon icon toggle logic (not mutually exclusive)
   document.querySelectorAll('.ribbon-icon').forEach(btn => {
@@ -932,7 +966,7 @@ let hourTicks = []; // Track which hour ticks have been added
 let tripPlotData = {
   labels: [],
   datasets: [{
-    label: 'Number of Active Trips',
+    label: 'Number of Active Vehicles',
     data: [],
     fill: true,
     backgroundColor: 'rgba(0,120,215,0.2)',
@@ -963,7 +997,7 @@ function initTripPlot() {
           }
         },
         y: {
-          title: { display: true, text: 'Number of Active Trips' },
+          title: { display: true, text: 'Number of Active Vehicles' },
           beginAtZero: true,
           ticks: {
             stepSize: 1,
@@ -975,7 +1009,7 @@ function initTripPlot() {
       },
       plugins: {
         legend: { display: false },
-        title: { text: 'Number of Trips', display: true, font: { size: 14 } }
+        title: { text: 'Number of Vehicles', display: true, font: { size: 14 } }
       }
     }
   });
@@ -1148,4 +1182,223 @@ function getRouteLabel(routeId) {
   return route.route_short_name || route.route_long_name || route.route_id;
 }
 
+
+// --- Trips Per Hour Plot Setup ---
+let tripsPerHourChart;
+let tripsPerHourColors = vehKmColors; // Reuse color palette
+let lastTripsPerHourUpdateHour = null;
+let tripsPerHourSeries = {}; // { route_id: [{x: hour, y: count}, ...] }
+let hasOneDirectionalHourInPlot = false;
+
+function setupTripsPerHourPlot() {
+  lastTripsPerHourUpdateHour = null;
+  tripsPerHourSeries = {};
+
+  const ctx = document.getElementById('tripsPerHourPlot').getContext('2d');
+  tripsPerHourChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      datasets: []
+    },
+    options: {
+      responsive: true,
+      animation: false,
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top',
+          labels: { color: '#222', font: { weight: 'bold' } }
+        },
+        title: {
+          display: true,
+          text: 'Estimated Headway (mm:ss) by Route',
+          font: { size: 14 }
+        }
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          title: { display: true, text: 'Hour of Day' },
+          ticks: {
+            stepSize: 1,
+            callback: function(value) {
+              return `${value}:00`;
+            }
+          }
+        },
+        y: {
+          title: { display: true, text: 'Estimated Headway (mm:ss)' },
+          beginAtZero: true,
+          ticks: {
+            stepSize: 1,
+            callback: function(value) {
+                if (value == null || !isFinite(value)) return '';
+                const mins = Math.floor(value);
+                const secs = Math.round((value - mins) * 60);
+                return `${mins}:${secs.toString().padStart(2, '0')}`;
+              }
+          }
+        }
+      }
+    }
+  });
+}
+
+function updateTripsPerHourPlotForHour(hour) {
+  // Check if direction_id is present in any trip
+  const hasDirectionId = trips.some(t => t.direction_id !== undefined && t.direction_id !== '');
+
+  // { route_id: { direction_id: [trip_id, ...] } }
+  const hourTrips = {};
+  filteredTrips.forEach(trip => {
+    const routeId = trip.route_id;
+    const startTime = tripStartTimeMap[trip.trip_id];
+    if (startTime == null) return;
+    const tripHour = Math.floor(startTime / 3600);
+    if (tripHour !== hour) return;
+
+    const dir = hasDirectionId ? (trip.direction_id ?? 'none') : 'none';
+    if (!hourTrips[routeId]) hourTrips[routeId] = {};
+    if (!hourTrips[routeId][dir]) hourTrips[routeId][dir] = [];
+    hourTrips[routeId][dir].push(trip);
+  });
+
+  // Now, for each route/direction, normalize trip counts by distance
+  const hourCounts = {};
+  Object.keys(hourTrips).forEach(routeId => {
+    hourCounts[routeId] = {};
+    Object.keys(hourTrips[routeId]).forEach(dir => {
+      const tripsArr = hourTrips[routeId][dir];
+      // Get distances for each trip
+      const dists = tripsArr.map(trip => shapeIdToDistance[trip.shape_id] || 0);
+      const maxDist = Math.max(...dists, 1); // Avoid division by zero
+      // Normalize each trip
+      const normalized = dists.map(d => d / maxDist);
+      hourCounts[routeId][dir] = normalized.reduce((a, b) => a + b, 0);
+    });
+  });
+
+  // Update the time series for each route
+  Object.keys(hourCounts).forEach(routeId => {
+    if (!tripsPerHourSeries[routeId]) tripsPerHourSeries[routeId] = [];
+    let yValue, annotation = null, pointStyle = 'circle';
+
+    if (!hasDirectionId) {
+      // No direction_id: sum all trips
+      yValue = Object.values(hourCounts[routeId]).reduce((a, b) => a + b, 0);
+    } else {
+      const dirs = Object.keys(hourCounts[routeId]);
+      if (dirs.length === 2) {
+        // Both directions present: average
+        yValue = (hourCounts[routeId]['0'] + hourCounts[routeId]['1']) / 2;
+      } else if (dirs.length === 1) {
+        hasOneDirectionalHourInPlot = true; // At least one route has only one direction
+        // Only one direction present
+        yValue = hourCounts[routeId][dirs[0]];
+        annotation = 'Only one direction present';
+        pointStyle = 'rectRot'; // Use a diamond shape for this case
+      }
+    }
+
+    tripsPerHourSeries[routeId].push({ x: hour, y: yValue, annotation, pointStyle });
+  });
+
+  // Also add zero for routes that had previous data but no trips this hour
+  Object.keys(tripsPerHourSeries).forEach(routeId => {
+    const last = tripsPerHourSeries[routeId][tripsPerHourSeries[routeId].length - 1];
+    if (last.x < hour) {
+      tripsPerHourSeries[routeId].push({ x: hour, y: 0 });
+    }
+  });
+
+  // Only plot top 10 routes by total trips so far
+  let totals = Object.entries(tripsPerHourSeries).map(([routeId, arr]) => ({
+    routeId,
+    total: arr.reduce((sum, pt) => sum + pt.y, 0)
+  }));
+  totals.sort((a, b) => b.total - a.total);
+  let top10 = totals.slice(0, 10).map(t => t.routeId);
+
+  tripsPerHourChart.data.datasets = top10.map((routeId, idx) => {
+    const color = tripsPerHourColors[idx % tripsPerHourColors.length];
+    return {
+      label: getRouteLabel(routeId),
+      data: tripsPerHourSeries[routeId],
+      borderColor: color,
+      backgroundColor: color,
+      fill: false,
+      tension: 0.1,
+      pointStyle: ctx => {
+        const i = ctx.dataIndex;
+        const pt = tripsPerHourSeries[routeId][i];
+        return pt && pt.pointStyle ? pt.pointStyle : 'circle';
+      },
+      pointRadius: ctx => {
+        const i = ctx.dataIndex;
+        const pt = tripsPerHourSeries[routeId][i];
+        if (!pt) return 3;
+        if (pt.y === 0) return 1; // very small for zero trips
+        if (pt.pointStyle === 'rectRot') return 10; // large for diamond
+        return 5; // normal for circle
+      },
+      pointHoverRadius: ctx => {
+        const i = ctx.dataIndex;
+        const pt = tripsPerHourSeries[routeId][i];
+        if (!pt) return 4;
+        if (pt.y === 0) return 2;
+        if (pt.pointStyle === 'rectRot') return 12;
+        return 7;
+      }
+    };
+  });
+
+  // Set x.min only once (on first data point)
+  if (tripsPerHourChart.data.datasets.length > 0 && tripsPerHourChart.options.scales.x.min === undefined) {
+    const firstDs = tripsPerHourChart.data.datasets[0];
+    if (firstDs.data.length > 0) {
+      tripsPerHourChart.options.scales.x.min = firstDs.data[0].x;
+    }
+  }
+  // Always update x.max to the latest hour
+  let maxX = -Infinity;
+  tripsPerHourChart.data.datasets.forEach(ds => {
+    if (ds.data.length > 0) {
+      const lastX = ds.data[ds.data.length - 1].x;
+      if (lastX > maxX) maxX = lastX;
+    }
+  });
+  if (maxX !== -Infinity) {
+    tripsPerHourChart.options.scales.x.max = maxX;
+  }
+
+  // Convert y-values to estimated headway (minutes)
+  Object.values(tripsPerHourSeries).forEach(series => {
+    const pt = series[series.length - 1];
+    if (pt) {
+      if (pt.y > 0) {
+        pt.y = 60 / pt.y;
+      } else {
+        pt.y = 0;
+      }
+    }
+  });
+
+  tripsPerHourChart.update();
+
+  // --- Show annotation if no direction_id ---
+  const annotationDiv = document.getElementById('tripsPerHourAnnotation');
+  if (annotationDiv) {
+    let annotationText = '';
+    if (!hasDirectionId) {
+      annotationText= 'Note: direction_id column not found in trips.txt. Trips/hour are totals regardless of direction.';      
+    }
+    if (hasOneDirectionalHourInPlot) {
+      if (annotationText) annotationText += ' ';
+      annotationText += 'Diamond datapoint represents that the trips are one-directional during this hour.';
+    }
+    
+    annotationDiv.textContent = annotationText;
+    annotationDiv.style.display = annotationText ? 'block' : 'none';    
+  }
+}
 //#endregion
