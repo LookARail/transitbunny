@@ -84,11 +84,11 @@
 
 
   <!-- Graphs Canvas with Tabs -->
-<div id="graphsCanvas" class="floating-canvas" style="display:none;">
+<div id="graphsCanvas" class="floating-canvas resizable-canvas" style="display:none;">
   <div class="canvas-header">
     <button class="tab-btn active" data-tab="tripPlotTab"># of Vehicles</button>
     <button class="tab-btn" data-tab="vehKmPlotTab">Vehicle-Kilometer</button>
-    <button class="tab-btn" data-tab="tripsPerHourTab">Trips/Hour</button>
+    <button class="tab-btn" data-tab="tripsPerHourTab">Headway</button>
   </div>
   <div class="canvas-content">
     <div id="tripPlotTab" class="tab-content active">
@@ -100,9 +100,10 @@
     <!-- trips per hour plot -->
     <div id="tripsPerHourTab" class="tab-content">
       <div id="tripsPerHourAnnotation" style="color: #b00; font-size: 0.85em; margin-bottom: 4px; display:none"></div>
-      <canvas id="tripsPerHourPlot" height="200"></canvas>
+      <canvas id="tripsPerHourPlot"></canvas>
     </div>
   </div>
+  <div class="resizer"></div>
 </div>
 
 <!-- Statistics Canvas with Tabs -->

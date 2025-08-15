@@ -614,6 +614,8 @@ function initializeAnimation() {
   lastTripsPerHourUpdateHour = null;
   tripsPerHourSeries = {};
 
+  buildMostCommonShapeIdByRouteDir();
+
   // determine earliest start time among remainingTrips
   animationTime = remainingTrips.reduce((min, t) => Math.min(min, t.startTime), Infinity);
 
@@ -980,8 +982,8 @@ function initTripPlot() {
   tripPlotChart = new Chart(ctx, {
     type: 'line',
     data: tripPlotData,
-    options: {
-      responsive: true,
+    options: {      
+      responsive: true,      
       animation: false,
       scales: {
         x: {
@@ -1068,7 +1070,7 @@ function setupVehKmPlot() {
       datasets: []
     },
     options: {
-      responsive: true,
+      responsive: true,      
       animation: false,
       plugins: {
         legend: {
@@ -1189,6 +1191,41 @@ let tripsPerHourColors = vehKmColors; // Reuse color palette
 let lastTripsPerHourUpdateHour = null;
 let tripsPerHourSeries = {}; // { route_id: [{x: hour, y: count}, ...] }
 let hasOneDirectionalHourInPlot = false;
+let mostCommonShapeIdByRouteDir = {}; // { route_id: { direction_id: shape_id } }
+let mostCommonShapeDistByRouteDir = {}; // { route_id: { direction_id: distance } }
+
+function buildMostCommonShapeIdByRouteDir() {
+  mostCommonShapeIdByRouteDir = {};
+  mostCommonShapeDistByRouteDir = {};
+
+  // Count shape_id usage for each route/direction
+  const countMap = {}; // { route_id: { direction_id: { shape_id: count } } }
+  trips.forEach(trip => {
+    const routeId = trip.route_id;
+    const dir = trip.direction_id ?? 'none';
+    const shapeId = trip.shape_id;
+    if (!countMap[routeId]) countMap[routeId] = {};
+    if (!countMap[routeId][dir]) countMap[routeId][dir] = {};
+    countMap[routeId][dir][shapeId] = (countMap[routeId][dir][shapeId] || 0) + 1;
+  });
+
+  // Find the most common shape_id for each route/direction
+  Object.entries(countMap).forEach(([routeId, dirMap]) => {
+    mostCommonShapeIdByRouteDir[routeId] = {};
+    mostCommonShapeDistByRouteDir[routeId] = {};
+    Object.entries(dirMap).forEach(([dir, shapeCounts]) => {
+      let maxCount = -1, mostCommonShapeId = null;
+      Object.entries(shapeCounts).forEach(([shapeId, count]) => {
+        if (count > maxCount) {
+          maxCount = count;
+          mostCommonShapeId = shapeId;
+        }
+      });
+      mostCommonShapeIdByRouteDir[routeId][dir] = mostCommonShapeId;
+      mostCommonShapeDistByRouteDir[routeId][dir] = shapeIdToDistance[mostCommonShapeId] || 1;
+    });
+  });
+}
 
 function setupTripsPerHourPlot() {
   lastTripsPerHourUpdateHour = null;
@@ -1201,7 +1238,7 @@ function setupTripsPerHourPlot() {
       datasets: []
     },
     options: {
-      responsive: true,
+      responsive: true,      
       animation: false,
       plugins: {
         legend: {
@@ -1271,11 +1308,15 @@ function updateTripsPerHourPlotForHour(hour) {
       const tripsArr = hourTrips[routeId][dir];
       // Get distances for each trip
       const dists = tripsArr.map(trip => shapeIdToDistance[trip.shape_id] || 0);
-      const maxDist = Math.max(...dists, 1); // Avoid division by zero
-      // Normalize each trip
-      const normalized = dists.map(d => d / maxDist);
+      const commonDist = mostCommonShapeDistByRouteDir[routeId] && mostCommonShapeDistByRouteDir[routeId][dir]
+        ? mostCommonShapeDistByRouteDir[routeId][dir]
+        : 1;      
+      // Normalize: full-length or longer trips count as 1, shorter as proportion
+      const normalized = dists.map(d => d >= commonDist ? 1 : d / commonDist);
       hourCounts[routeId][dir] = normalized.reduce((a, b) => a + b, 0);
+      //console.log(`For route ${routeId}: before normalization # of trips is ${tripsArr.length}. after normalization # of trips is ${normalized.reduce((a, b) => a + b, 0).toFixed(2)}. Normalization Trip Distance is ${mostCommonShapeDistByRouteDir[routeId][dir]} All Distance: ${dists}`);
     });
+
   });
 
   // Update the time series for each route
@@ -1390,7 +1431,7 @@ function updateTripsPerHourPlotForHour(hour) {
   if (annotationDiv) {
     let annotationText = '';
     if (!hasDirectionId) {
-      annotationText= 'Note: direction_id column not found in trips.txt. Trips/hour are totals regardless of direction.';      
+      annotationText= 'Note: direction_id column not found in trips.txt. Headway estimation treats every trip as the same direction and could be inaccurate.';
     }
     if (hasOneDirectionalHourInPlot) {
       if (annotationText) annotationText += ' ';
