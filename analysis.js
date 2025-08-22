@@ -1,4 +1,7 @@
 
+let tripStopsMap_analysis = {};
+let stopIdToName = {};
+
 function generateRouteStatsTable(filteredTrips, shapes, stops, stopTimes, routes) {
   // Map shape_id to its shape points
   const shapesById = {};
@@ -7,21 +10,7 @@ function generateRouteStatsTable(filteredTrips, shapes, stops, stopTimes, routes
     shapesById[s.shape_id].push(s);
   });
 
-  // Precompute stopIdToName map
-  const stopIdToName = {};
-  stops.forEach(s => { stopIdToName[s.id] = s.name; });
-
-   // Precompute stopIdToName map
-
-  const tripStopsMap = {};
-  stopTimes.forEach(st => {
-  if (!tripStopsMap[st.trip_id]) tripStopsMap[st.trip_id] = [];
-    tripStopsMap[st.trip_id].push(st);
-  });
-  // Sort each trip's stops by stop_sequence
-  Object.values(tripStopsMap).forEach(stopsArr => {
-    stopsArr.sort((a, b) => a.stop_sequence - b.stop_sequence);
-  });
+  RecomputeMap();
 
   // Map route_id to route_name
   const routeNames = {};
@@ -37,30 +26,6 @@ function generateRouteStatsTable(filteredTrips, shapes, stops, stopTimes, routes
     if (!stats[routeName][trip.shape_id]) stats[routeName][trip.shape_id] = [];
     stats[routeName][trip.shape_id].push(trip);
   });
-
-  // Helper: get first/last station for a trip
-  function getFirstLastStations(trip) {
-    //console.log(`For trip${trip.trip_id}. Trying to find first and last stations.`);
-
-    const tripStops = stopTimes.filter(st => st.trip_id === trip.trip_id)
-      .sort((a, b) => a.stop_sequence - b.stop_sequence);
-    const firstStopName = stopIdToName[tripStops[0].stop_id] || '';
-    const lastStopName = stopIdToName[tripStops[tripStops.length - 1].stop_id] || '';
-    return [firstStopName, lastStopName];
-  }
-
-  // Helper: get travel times for all trips with shape_id
-  function getTravelTimes(trips) {
-    //console.log(`Computing Travel Time`);
-
-    return trips.map(trip => {
-        const tripStops = tripStopsMap[trip.trip_id] || [];
-        if (tripStops.length < 2) return null;
-        const start = timeToSeconds(tripStops[0].departure_time || tripStops[0].arrival_time);
-        const end = timeToSeconds(tripStops[tripStops.length - 1].arrival_time || tripStops[tripStops.length - 1].departure_time);
-        return end - start;
-    }).filter(t => t !== null);
-  }
 
   // Build table rows
   const rows = [];
@@ -168,6 +133,8 @@ function timeToSeconds(t) {
   const [h, m, s] = t.split(':').map(Number);
   return h * 3600 + m * 60 + s;
 }
+
+
 function calculateDistance(lat1, lon1, lat2, lon2) {
   const R = 6371000;
   const toRad = deg => deg * Math.PI / 180;
@@ -177,6 +144,179 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+
+//#region Compare Services
+function populateCompareServiceDateFilters() {
+  const sel1 = document.getElementById('compareServiceDate1');
+  const sel2 = document.getElementById('compareServiceDate2');
+  if (!sel1 || !sel2) return;
+
+  // Build options (same as updateServiceDateFilterUI, but single-select)
+  let options = [];
+  for (const label in genericWeekdayDates) {
+    options.push(`<option value="GENERIC:${label}">${label}</option>`);
+  }
+  const allDates = Object.keys(serviceDateDict).sort();
+  for (const date of allDates) {
+    const y = date.slice(0,4), m = date.slice(4,6), d = date.slice(6,8);
+    options.push(`<option value="${date}">${y}-${m}-${d}</option>`);
+  }
+  sel1.innerHTML = options.join('');
+  sel2.innerHTML = options.join('');
+}
+
+// --- Compare Service-Dates Button Handler ---
+function setupCompareServiceDatesFeature() {
+  // Populate filters on load and after GTFS load
+  if (serviceDateFilterMode) populateCompareServiceDateFilters();
+
+  // Re-populate after GTFS load or calendar change
+  const origUpdateServiceDateFilterUI = updateServiceDateFilterUI;
+  updateServiceDateFilterUI = function() {
+    origUpdateServiceDateFilterUI();
+    if (serviceDateFilterMode) populateCompareServiceDateFilters();
+  };
+
+  document.getElementById('compareServiceDatesBtn')?.addEventListener('click', function() {
+    const sel1 = document.getElementById('compareServiceDate1');
+    const sel2 = document.getElementById('compareServiceDate2');
+    if (!sel1 || !sel2) return;
+    const val1 = sel1.value, val2 = sel2.value;
+    if (!val1 || !val2) {
+      alert('Please select both service-dates.');
+      return;
+    }
+    // Get current route type and route name filter selections
+    const types = Array.from(document.getElementById('routeTypeSelect').selectedOptions).map(o => o.value);
+    const names = Array.from(document.getElementById('routeShortNameSelect').selectedOptions).map(o => o.value);
+
+    RecomputeMap();
+
+    // Helper: get all service_ids for a service-date value
+    function getServiceIdsFor(val) {
+      let sids = new Set();
+      if (val.startsWith('GENERIC:')) {
+        const label = val.slice(8);
+        (genericWeekdayDates[label] || []).forEach(date => {
+          (serviceDateDict[date] || []).forEach(sid => sids.add(sid));
+        });
+      } else {
+        (serviceDateDict[val] || []).forEach(sid => sids.add(sid));
+      }
+      return sids;
+    }
+    const sids1 = getServiceIdsFor(val1);
+    const sids2 = getServiceIdsFor(val2);
+
+    // Filter trips for each service-date, route type, and route name
+    function tripsFor(sids) {
+      return trips.filter(t =>
+        types.includes(t.route.route_type) &&
+        names.includes(`${t.route.route_short_name}-${t.route.route_long_name}`) &&
+        sids.has(t.service_id)
+      );
+    }
+    const trips1 = tripsFor(sids1);
+    const trips2 = tripsFor(sids2);
+
+    // Group trips by route_id
+    function groupByRoute(tripArr) {
+      const map = {};
+      tripArr.forEach(t => {
+        if (!map[t.route_id]) map[t.route_id] = [];
+        map[t.route_id].push(t);
+      });
+      return map;
+    }
+    const byRoute1 = groupByRoute(trips1);
+    const byRoute2 = groupByRoute(trips2);
+
+    // Union of all route_ids in either set
+    const allRouteIds = new Set([...Object.keys(byRoute1), ...Object.keys(byRoute2)]);
+
+    // Precompute shapesById for fast lookup
+    const shapesById = {};
+    shapes.forEach(s => {
+      if (!shapesById[s.shape_id]) shapesById[s.shape_id] = [];
+      shapesById[s.shape_id].push(s);
+    });
+
+    function computeStats(tripArr) {
+      let nTrips = tripArr.length;
+      // Group trips by shape_id
+      const tripsByShape = {};
+      tripArr.forEach(t => {
+        if (!tripsByShape[t.shape_id]) tripsByShape[t.shape_id] = [];
+        tripsByShape[t.shape_id].push(t);
+      });
+
+      // Vehicle-KM: sum shape distance * #trips for each shape_id
+      let totalKm = 0;
+      for (const shape_id in tripsByShape) {
+        const shapePts = shapesById[shape_id] || [];
+        const dist = shapePts.length > 1 ? shapeDistance(shapePts) : 0;
+        totalKm += dist * tripsByShape[shape_id].length;
+      }
+
+      // Average Trip Time: use getTravelTimes helper
+      const travelTimes = getTravelTimes(tripArr);
+      const avgTripTime = travelTimes.length
+        ? (travelTimes.reduce((a, b) => a + b, 0) / travelTimes.length) / 60
+        : '';
+
+      return {
+        nTrips,
+        totalKm: totalKm ? totalKm.toFixed(2) : '',
+        avgTripTime: avgTripTime ? avgTripTime.toFixed(1) : ''
+      };
+    }
+
+    // Build table rows
+    let rows = [];
+    for (const route_id of allRouteIds) {
+      const t1 = byRoute1[route_id] || [];
+      const t2 = byRoute2[route_id] || [];
+      // Route info
+      let route = routes.find(r => r.route_id === route_id);
+      let routeName = route ? `${route.route_short_name} - ${route.route_long_name}` : '';
+      let stats1 = t1.length ? computeStats(t1) : { nTrips:'', totalKm:'', avgTripTime:'' };
+      let stats2 = t2.length ? computeStats(t2) : { nTrips:'', totalKm:'', avgTripTime:'' };
+      rows.push([
+        routeName,
+        route_id,
+        stats1.nTrips, stats1.totalKm, stats1.avgTripTime,
+        stats2.nTrips, stats2.totalKm, stats2.avgTripTime
+      ]);
+    }
+
+    // Sort: base on routeName, then route_id
+    rows.sort((a,b) => (a[0]||'').localeCompare(b[0]||'') || (a[1]||'').localeCompare(b[1]||''));
+
+    // Table header
+    const th = `
+      <tr>
+        <th>Route Name</th>
+        <th>Route ID</th>
+        <th># Trips<br>(${sel1.options[sel1.selectedIndex].text})</th>
+        <th>Vehicle-KM<br>(${sel1.options[sel1.selectedIndex].text})</th>
+        <th>Avg Trip Time (min)<br>(${sel1.options[sel1.selectedIndex].text})</th>
+        <th># Trips<br>(${sel2.options[sel2.selectedIndex].text})</th>
+        <th>Vehicle-KM<br>(${sel2.options[sel2.selectedIndex].text})</th>
+        <th>Avg Trip Time (min)<br>(${sel2.options[sel2.selectedIndex].text})</th>
+      </tr>
+    `;
+    const html = `<table style="width:100%; font-size:0.95em;">
+      <thead>${th}</thead>
+      <tbody>
+        ${rows.map(r => `<tr>${r.map(cell => `<td>${cell||''}</td>`).join('')}</tr>`).join('')}
+      </tbody>
+    </table>`;
+    document.getElementById('compareServiceDatesTable').innerHTML = html;
+  });
+}
+
+
+//#region Helper
 // Helper: calculate shape distance
 function shapeDistance(shapePts) {
   //Sort by shape_pt_sequence
@@ -207,10 +347,51 @@ function shapeDistance(shapePts) {
   }
 }
 
+  // Helper: get travel times for all trips with shape_id
+  function getTravelTimes(trips) {
+    //console.log(`Computing Travel Time`);
+
+    return trips.map(trip => {
+        const tripStops = tripStopsMap_analysis[trip.trip_id] || [];
+        if (tripStops.length < 2) return null;
+        const start = timeToSeconds(tripStops[0].departure_time || tripStops[0].arrival_time);
+        const end = timeToSeconds(tripStops[tripStops.length - 1].arrival_time || tripStops[tripStops.length - 1].departure_time);
+        return end - start;
+    }).filter(t => t !== null);
+  }
+
+  // Helper: get first/last station for a trip
+  function getFirstLastStations(trip) {
+    //console.log(`For trip${trip.trip_id}. Trying to find first and last stations.`);
+
+    const tripStops = stopTimes.filter(st => st.trip_id === trip.trip_id)
+      .sort((a, b) => a.stop_sequence - b.stop_sequence);
+    const firstStopName = stopIdToName[tripStops[0].stop_id] || '';
+    const lastStopName = stopIdToName[tripStops[tripStops.length - 1].stop_id] || '';
+    return [firstStopName, lastStopName];
+  }
+
+function RecomputeMap(){
+  // Precompute stopIdToName map  
+  stopIdToName = {};
+  stops.forEach(s => { stopIdToName[s.id] = s.name; });
+
+   // Precompute stopIdToName map
+  tripStopsMap_analysis = {};
+  stopTimes.forEach(st => {
+  if (!tripStopsMap_analysis[st.trip_id]) tripStopsMap_analysis[st.trip_id] = [];
+    tripStopsMap_analysis[st.trip_id].push(st);
+  });
+  // Sort each trip's stops by stop_sequence
+  Object.values(tripStopsMap_analysis).forEach(stopsArr => {
+    stopsArr.sort((a, b) => a.stop_sequence - b.stop_sequence);
+  });
+}
+
+//#endregion
 
 // === Run on Load ===
 window.addEventListener('DOMContentLoaded', () => {
-
   document.getElementById('GenerateStat').addEventListener('click', () => {
     console.log('Generating route statistics...');
     generateRouteStatsTable(filteredTrips, shapes, stops, stopTimes, routes);    
@@ -221,5 +402,9 @@ window.addEventListener('DOMContentLoaded', () => {
       alert("No statistics available to download. Please generate statistics first.");
       return;
     }
-    downloadStatsCSV(lastStatsRows);  });
+    downloadStatsCSV(lastStatsRows);
+  });
+
+  setupCompareServiceDatesFeature();
+
 });

@@ -229,19 +229,22 @@
   outline: none;
 }
 
-
-#routeStatsTableWrapper {
-  width: 100%;
-  height: calc(100% - 60px); /* leave space for button/title */
+#routeStatsTableWrapper,
+#compareServiceDatesTableWrapper {  
+  flex: 1 1 auto;
+  min-height: 0;
+  width: calc(100% - 24px);
   overflow-y: auto;
   overflow-x: auto;
   border-radius: 8px;
   box-shadow: 0 1px 6px rgba(0,0,0,0.07);
   background: #f8fafc;
+  margin-top: 10px;
+  margin-right: 300px;
 }
 
-#routeStatsTable table {
-  width: 100%;
+#routeStatsTable, #compareServiceDatesTable table {
+  width: 100%;  
   border-collapse: collapse;
   font-size: 0.78rem;
   background: #fff;
@@ -250,13 +253,14 @@
   box-shadow: 0 1px 6px rgba(0,0,0,0.07);
 }
 
-#routeStatsTable th, #routeStatsTable td {
+#routeStatsTable th, #routeStatsTable td, #compareServiceDatesTable th, #compareServiceDatesTable td {
   padding: 8px 12px;
   text-align: center;
   border-bottom: 1px solid #e3e8ee;
+  border-right: 1px solid #e3e8ee;   /* Add this line for vertical borders */
 }
 
-#routeStatsTable th {
+#routeStatsTable th, #compareServiceDatesTable th {
   background: #0078d7;
   color: #fff;
   position: sticky;
@@ -264,11 +268,11 @@
   z-index: 2;
 }
 
-#routeStatsTable tr:nth-child(even) {
+#routeStatsTable tr:nth-child(even), #compareServiceDatesTable tr:nth-child(even) {
   background: #f5f7fa;
 }
 
-#routeStatsTable tr:hover {
+#routeStatsTable tr:hover, #compareServiceDatesTable tr:hover {
   background: #e3f2fd;
 }
 
@@ -346,7 +350,7 @@
   top: 24px;
   width: 540px;
   max-width: 96vw;
-  max-height: 60vh;
+  max-height: 90vh;
 }
 
 /* Stats: below graphs, top right */
@@ -356,6 +360,19 @@
   width: 540px;
   max-width: 96vw;
   max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  max-height: 60vh;
+  height: 60vh; /* or another fixed value */
+}
+
+#statsCanvas .canvas-content {
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .canvas-header {
@@ -451,8 +468,7 @@
   overflow: auto;
   min-width: 300px;
   min-height: 200px;
-  max-width: 100vw;
-  max-height: 160vh;
+  max-width: 100vw;  
   border: 1px solid #aaa;
   background: #fff;
 }
@@ -467,6 +483,33 @@
 .canvas-content {
   width: 100%;
   height: 100%;
+}
+
+#transitScoreCanvas.floating-canvas {
+  right: 32px;
+  bottom: 80px;
+  width: 380px;
+  max-width: 96vw;
+  max-height: 38vh;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 16px rgba(0,0,0,0.12);
+  border: 1px solid #ddd;
+}
+
+.close-canvas-btn {
+  margin-left: auto !important;
+  background: none !important;
+  border: none !important;
+  color: #fff !important;
+  font-size: 1.3em !important;
+  cursor: pointer !important;
+  opacity: 0.7 !important;
+  transition: opacity 0.2s !important;
+}
+.close-canvas-btn:hover {
+  opacity: 1 !important;
+  color: #ff5252 !important;
 }
 
 @media (max-width: 900px) {
@@ -499,4 +542,12 @@
     height: 48px;
   }
   .ribbon-icon { font-size: 1.5rem; }
+
+  .transit-score-marker {
+    background: none !important;
+    border: none !important;
+    box-shadow: none !important;
+    pointer-events: none;
+  }
+
 }
