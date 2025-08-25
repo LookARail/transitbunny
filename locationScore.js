@@ -8,28 +8,43 @@
  * @returns {number} Accessibility score (0-100)
  */
 async function calculateTransitAccessibilityScore(lat, lon, filteredStops, filteredStopTimes, filteredTrips) {
-  const alpha = 0.18;
+  const alpha = 10;
   const searchRadiusMeters = 1000;
 
+  //0. Pre-Compute map
+  const stopTimesByStopId = {};
+  for (const st of filteredStopTimes) {
+    if (!stopTimesByStopId[st.stop_id]) stopTimesByStopId[st.stop_id] = [];
+    stopTimesByStopId[st.stop_id].push(st);
+  }
+  const tripById = {};
+  for (const t of filteredTrips) {
+    tripById[t.trip_id] = t;
+  }
+
   // 1. Find all stops within 1km
+  const bbox = getBoundingBox(lat, lon, searchRadiusMeters);
   const stopsWithinRadius = filteredStops
+    .filter(stop =>
+      stop.lat >= bbox.minLat && stop.lat <= bbox.maxLat &&
+      stop.lon >= bbox.minLon && stop.lon <= bbox.maxLon
+    )
     .map(stop => ({
       stop,
       distance: calculateDistance(lat, lon, stop.lat, stop.lon)
     }))
     .filter(obj => obj.distance <= searchRadiusMeters);
+  console.log(`Found ${stopsWithinRadius.length} stops within ${searchRadiusMeters} meters.`);
 
   // 2. Build shapeIdToClosestStop map
   const shapeIdToClosestStop = new Map();
   for (const { stop, distance } of stopsWithinRadius) {
     // Get all trip_ids serving this stop
-    const tripIds = filteredStopTimes
-      .filter(st => st.stop_id === stop.id)
-      .map(st => st.trip_id);
+    const tripIds = (stopTimesByStopId[stop.id] || []).map(st => st.trip_id);
 
     // For each trip, get its shape_id
     for (const tripId of tripIds) {
-      const trip = filteredTrips.find(t => t.trip_id === tripId);
+      const trip = tripById[tripId];
       if (trip && trip.shape_id) {
         const current = shapeIdToClosestStop.get(trip.shape_id);
         if (!current || distance < current.distance) {
@@ -40,35 +55,10 @@ async function calculateTransitAccessibilityScore(lat, lon, filteredStops, filte
   }
   console.log(`Found ${shapeIdToClosestStop.size} shape_ids with closest stops.`);
 
-  // Helper: get all trips serving a stop
-  function tripsForStop(stopId) {
-    return filteredStopTimes.filter(st => st.stop_id === stopId).map(st => st.trip_id);
-  }
 
   // Helper: get all stop_times for a stop, grouped by trip
   function stopTimesForStop(stopId) {
-    return filteredStopTimes.filter(st => st.stop_id === stopId);
-  }
-
-  // Helper: get all departure times (in seconds) for a stop
-  function departureTimesForStop(stopId) {
-    return stopTimesForStop(stopId).map(st => timeToSeconds(st.departure_time));
-  }
-
-  // Helper: get all service_ids for a stop
-  function serviceIdsForStop(stopId) {
-    return new Set(stopTimesForStop(stopId).map(st => {
-      const trip = filteredTrips.find(t => t.trip_id === st.trip_id);
-      return trip ? trip.service_id : null;
-    }).filter(Boolean));
-  }
-
-  // Helper: for a stop, get all departures for the day (across all trips)
-  function allDeparturesForStop(stopId) {
-    return stopTimesForStop(stopId).map(st => ({
-      time: timeToSeconds(st.departure_time),
-      trip_id: st.trip_id
-    }));
+    return stopTimesByStopId[stopId] || [];
   }
 
   // Helper: for a stop, get the highest hourly frequency in the day
@@ -76,7 +66,7 @@ async function calculateTransitAccessibilityScore(lat, lon, filteredStops, filte
       // Only include stop_times for trips with this shape_id
       const departures = stopTimesForStop(stopId)
           .filter(st => {
-              const trip = filteredTrips.find(t => t.trip_id === st.trip_id);
+              const trip = tripById[st.trip_id];
               return trip && trip.shape_id === shapeId;
           })
           .map(st => timeToSeconds(st.departure_time));
@@ -104,7 +94,7 @@ async function calculateTransitAccessibilityScore(lat, lon, filteredStops, filte
   function totalServiceHours(stopId, shapeId) {
     const departures = stopTimesForStop(stopId)
       .filter(st => {
-        const trip = filteredTrips.find(t => t.trip_id === st.trip_id);
+        const trip = tripById[st.trip_id];
         return trip && trip.shape_id === shapeId;
       })
       .map(st => timeToSeconds(st.departure_time));
@@ -114,7 +104,11 @@ async function calculateTransitAccessibilityScore(lat, lon, filteredStops, filte
     return uniqueHours.size;
   }
 
-  // 2. For each stop, calculate stop score
+  // 2. Compute default perfect stop score
+  const defaultF = 10, defaultS = 18, defaultD = 150;
+  const defaultStopScore = 2 * calculateStopScore(alpha, defaultF, defaultS, defaultD);
+
+  // 3. For each stop, calculate stop score
   let sumStopScores = 0;
   for (const [shapeId, { stop, distance }] of shapeIdToClosestStop.entries()) {
     const d = distance;
@@ -132,25 +126,21 @@ async function calculateTransitAccessibilityScore(lat, lon, filteredStops, filte
     }
 
     // Stop Score formula
-    const stopScore = calculateStopScore(alpha, f, s, d);
+    const stopScore = Math.min(33, calculateStopScore(alpha, f, s, d)); //each stop can at most score 33 point
     sumStopScores += stopScore;
 
-    console.log(`Stop ${stop.name} (${stop.id}) for shapeID ${shapeId} and route_name=${routeName}: d=${d.toFixed(1)}m, f=${f}, s=${s.toFixed(1)}h, score=${stopScore.toFixed(4)}`);
+    console.log(`Stop ${stop.name} (${stop.id}) for shapeID ${shapeId} and route_name=${routeName}: d=${d.toFixed(1)}m, f=${f}, s=${s.toFixed(1)}h, score contribution =${(stopScore / defaultStopScore * 100).toFixed(2)}`);
     }
 
-  // 3. Compute default perfect stop score
-  const defaultAlpha = 0.18, defaultF = 12, defaultS = 18, defaultD = 150;
-  const defaultStopScore = calculateStopScore(defaultAlpha, defaultF, defaultS, defaultD);
-
   // 4. Final score
-  const accessibilityScore = 100 * Math.min(1, sumStopScores / (2 * defaultStopScore));
+  const accessibilityScore = 100 * Math.min(1, sumStopScores / (defaultStopScore));
 
-  console.log(`total sum of stop scores ${sumStopScores.toFixed(4)}`);
+  console.log(`total sum of stop scores ${sumStopScores.toFixed(4)} out of ${defaultStopScore.toFixed(4)}`);
   return accessibilityScore;
 }
 
-function calculateStopScore(alpha, f, s, d){
-    return  (1 - Math.exp(-alpha * f)) * Math.min(1, s / 18) * Math.exp(-d / 150);
+function calculateStopScore(alpha, f, s, d){  
+    return  (Math.exp(-1 * alpha / (Math.min(f, 60))) * Math.min(1, s / 18) * Math.exp( Math.max(125, d) / -150));
 }
 
 // --- Transit Accessibility Score Feature ---
@@ -217,3 +207,15 @@ function removeTransitScoreMarker() {
   }
 }
 
+function getBoundingBox(lat, lon, radiusMeters) {
+  // Approximate radius of earth in meters
+  const R = 6378137;
+  const dLat = (radiusMeters / R) * (180 / Math.PI);
+  const dLon = (radiusMeters / (R * Math.cos(Math.PI * lat / 180))) * (180 / Math.PI);
+  return {
+    minLat: lat - dLat,
+    maxLat: lat + dLat,
+    minLon: lon - dLon,
+    maxLon: lon + dLon
+  };
+}
