@@ -5,14 +5,24 @@ let hourTicks = []; // Track which hour ticks have been added
 
 let tripPlotData = {
   labels: [],
-  datasets: [{
-    label: 'Number of Active Vehicles',
-    data: [],
-    fill: true,
-    backgroundColor: 'rgba(0,120,215,0.2)',
-    borderColor: '#0078d7',
-    tension: 0.2
-  }]
+  datasets: [
+    {
+      label: 'Service Date 1',
+      data: [],
+      fill: true,
+      backgroundColor: 'rgba(0,120,215,0.2)',
+      borderColor: '#0078d7',
+      tension: 0.2
+    },
+    {
+      label: 'Service Date 2',
+      data: [],
+      fill: true,
+      backgroundColor: 'rgba(255,120,0,0.2)',
+      borderColor: '#ff7f00',
+      tension: 0.2
+    }
+  ]
 };
 
 function initTripPlot() {
@@ -48,27 +58,36 @@ function initTripPlot() {
         }
       },
       plugins: {
-        legend: { display: false },
+        legend: { display: true, position: 'bottom' },
         title: { text: 'Number of Vehicles', display: true, font: { size: 14 } }
       }
     }
   });
+
+
+  tripPlotChart.update();
 }
 
 function updateTripPlot(currentTime) {
-  let activeTripsCount = allVehicleMarkers.length;
-  const lastTime = tripPlotData.labels.length > 0
-  ? timeToSeconds(tripPlotData.labels[tripPlotData.labels.length - 1])
-  : null;
-  
-  // Only record if at least 60 seconds since last record
-  if (lastTime === null || currentTime - lastTime >= 60 || activeTripsCount === 0) {
-    const timeLabel = formatTime(currentTime);
-    tripPlotData.labels.push(timeLabel);
-    tripPlotData.datasets[0].data.push(activeTripsCount);
 
-    // Only insert hour tick if this is NOT the first data point
-    if (tripPlotData.labels.length > 1) {
+  let count1 = 0, count2 = 0;
+  for (const m of allVehicleMarkers) {
+    if (m.parentTrip && window.tripIds1 && window.tripIds1.has(m.parentTrip.trip_id)) count1++;
+    if (m.parentTrip && window.tripIds2 && window.tripIds2.has(m.parentTrip.trip_id)) count2++;
+  }
+
+  // Only record if at least 60 seconds since last record or if both counts are zero
+  const lastTime = tripPlotChart.data.labels.length > 0
+    ? timeToSeconds(tripPlotChart.data.labels[tripPlotChart.data.labels.length - 1])
+    : null;
+  if (lastTime === null || currentTime - lastTime >= 60 || (count1 === 0 && count2 === 0)) {
+    const timeLabel = formatTime(currentTime);
+    tripPlotChart.data.labels.push(timeLabel);
+    tripPlotChart.data.datasets[0].data.push(count1);
+    tripPlotChart.data.datasets[1].data.push(count2);
+
+    // Insert hour tick if needed
+    if (tripPlotChart.data.labels.length > 1) {
       const currentHour = Math.floor(currentTime / 3600);
       const hourLabel = formatTime(currentHour * 3600);
       if (
@@ -76,15 +95,32 @@ function updateTripPlot(currentTime) {
         currentHour > hourTicks[hourTicks.length - 1]
       ) {
         hourTicks.push(currentHour);
-        // Only add the hour label if not present
-        if (!tripPlotData.labels.includes(hourLabel)) {
-          // Insert the hour label at the correct position (before current timeLabel)
-          const insertIndex = tripPlotData.labels.length - 1;
-          tripPlotData.labels.splice(insertIndex, 0, hourLabel);
-          // Do NOT add a data point for the hour label
+        // Only insert hour tick if last label is not already the hour label
+        if (tripPlotChart.data.labels[tripPlotChart.data.labels.length - 2] !== hourLabel) {
+          const insertIndex = tripPlotChart.data.labels.length - 1;
+          tripPlotChart.data.labels.splice(insertIndex, 0, hourLabel);
         }
       }
     }
+
+      //legend
+    const sdSel = document.getElementById('serviceDateSelect');
+    const selectedLabels = Array.from(sdSel.selectedOptions).map(o => o.text);
+    
+    // Always set the first label (if any)
+    tripPlotChart.data.datasets[0].label = selectedLabels[0] || "Service Date 1";
+    // Set the second label or hide if not present
+    if (selectedLabels.length > 1) {
+      tripPlotChart.data.datasets[1].label = selectedLabels[1];
+      tripPlotChart.data.datasets[1].hidden = false;
+    } else {
+      tripPlotChart.data.datasets[1].label = "";
+      tripPlotChart.data.datasets[1].hidden = true;
+    }
+    // Hide Service Date 2 if all values are null or zero    
+    const hasData2 = selectedLabels.length > 1;
+    tripPlotChart.data.datasets[1].hidden = !hasData2;
+    tripPlotChart.options.plugins.legend.display = hasData2;
 
     tripPlotChart.update();
   }
@@ -98,7 +134,7 @@ const vehKmColors = [
   "#ffff33", "#a65628", "#f781bf", "#999999", "#1b9e77"
 ];
 let vehKmChart;
-let vehKmData = {}; // { route_id: { label, color, data: [{x, y}], total } }
+let vehKmData = []; // { route_id: { label, color, data: [{x, y}], total } }
 let vehKmTime = 0;  // Current simulation time in seconds
 
 function setupVehKmPlot() {
@@ -152,27 +188,48 @@ function setupVehKmPlot() {
 function updateVehKmOnTripFinish(trip, tripDistanceKm, simTime) {
   // Only track top 10 routes by cumulative km
   const routeId = trip.route_id;
-  if (!vehKmData[routeId]) {
-    const colorIdx = Object.keys(vehKmData).length % vehKmColors.length;
-    vehKmData[routeId] = {
-      label: getRouteLabel(routeId),
-      color: vehKmColors[colorIdx],
-      data: [],
-      total: 0
-    };
-  }
+  const sdSel = document.getElementById('serviceDateSelect');
+  const selectedLabels = Array.from(sdSel.selectedOptions).map(o => o.text);
 
- 
-  // Buffer the tripDistanceKm and simTime
-  if (!vehKmPendingPoints[routeId]) vehKmPendingPoints[routeId] = [];
-  vehKmPendingPoints[routeId].push({ x: simTime, distance: tripDistanceKm });
-}
+  if (window.tripIds1 && window.tripIds1.has(trip.trip_id)){
+    const key = `${trip.route_id}__${selectedLabels[0]}`;
+    if (!vehKmData[key]) {
+      const colorIdx = Object.keys(vehKmData).length % vehKmColors.length;
+      vehKmData[key] = {
+        label: `${getRouteLabel(routeId)}  (${selectedLabels[0]})`,
+        color: vehKmColors[colorIdx],
+        data: [],
+        total: 0
+      };
+    }
+
+    // Buffer the tripDistanceKm and simTime
+    if (!vehKmPendingPoints[key]) vehKmPendingPoints[key] = [];
+    vehKmPendingPoints[key].push({ x: simTime, distance: tripDistanceKm });
+  } 
+  if (window.tripIds2 && window.tripIds2.has(trip.trip_id)){
+    const key = `${trip.route_id}__${selectedLabels[1]}`;
+    if (!vehKmData[key]) {
+      const colorIdx = Object.keys(vehKmData).length % vehKmColors.length;
+      vehKmData[key] = {
+        label: `${getRouteLabel(routeId)}  (${selectedLabels[1]})`,
+        color: vehKmColors[colorIdx],
+        data: [],
+        total: 0
+      };
+    }
+
+    // Buffer the tripDistanceKm and simTime
+    if (!vehKmPendingPoints[key]) vehKmPendingPoints[key] = [];
+    vehKmPendingPoints[key].push({ x: simTime, distance: tripDistanceKm });
+  } 
+ }
 
 function flushVehKmPendingPoints() {
-  Object.entries(vehKmPendingPoints).forEach(([routeId, points]) => {
+  Object.entries(vehKmPendingPoints).forEach(([key, points]) => {
     // Sort points by x (time)
     points.sort((a, b) => a.x - b.x);
-    let routeObj = vehKmData[routeId];
+    let routeObj = vehKmData[key];
     if (!routeObj) return;
     // Start from the last total
     let total = routeObj.data.length > 0 ? routeObj.data[routeObj.data.length - 1].y : 0;
@@ -228,7 +285,7 @@ function getRouteLabel(routeId) {
 let tripsPerHourChart;
 let tripsPerHourColors = vehKmColors; // Reuse color palette
 let lastTripsPerHourUpdateHour = null;
-let tripsPerHourSeries = {}; // { route_id: [{x: hour, y: count}, ...] }
+let tripsPerHourSeries = {}; // { route_id_serviceDate: [{x: hour, y: count}, ...] }
 let hasOneDirectionalHourInPlot = false;
 let mostCommonShapeIdByRouteDir = {}; // { route_id: { direction_id: shape_id } }
 let mostCommonShapeDistByRouteDir = {}; // { route_id: { direction_id: distance } }
@@ -320,9 +377,13 @@ function setupTripsPerHourPlot() {
   });
 }
 
-function updateTripsPerHourPlotForHour(hour) {
+function updateHeadwayPlotForHour(hour) {
   // Check if direction_id is present in any trip
   const hasDirectionId = trips.some(t => t.direction_id !== undefined && t.direction_id !== '');
+
+  const sdSel = document.getElementById('serviceDateSelect');
+  const selectedLabels = Array.from(sdSel.selectedOptions).map(o => o.text);
+  let serviceDateLabel = null;
 
   // { route_id: { direction_id: [trip_id, ...] } }
   const hourTrips = {};
@@ -334,88 +395,101 @@ function updateTripsPerHourPlotForHour(hour) {
     if (tripHour !== hour) return;
 
     const dir = hasDirectionId ? (trip.direction_id ?? 'none') : 'none';
-    if (!hourTrips[routeId]) hourTrips[routeId] = {};
-    if (!hourTrips[routeId][dir]) hourTrips[routeId][dir] = [];
-    hourTrips[routeId][dir].push(trip);
+
+    if (window.tripIds1 && window.tripIds1.has(trip.trip_id)){
+      serviceDateLabel = selectedLabels[0];
+      const routeKey = `${trip.route_id}__${serviceDateLabel}`;
+      if (!hourTrips[routeKey]) hourTrips[routeKey] = {};
+      if (!hourTrips[routeKey][dir]) hourTrips[routeKey][dir] = [];
+      hourTrips[routeKey][dir].push(trip);
+    } 
+    if (window.tripIds2 && window.tripIds2.has(trip.trip_id)){
+      serviceDateLabel = selectedLabels[1];
+      const routeKey = `${trip.route_id}__${serviceDateLabel}`;
+      if (!hourTrips[routeKey]) hourTrips[routeKey] = {};
+      if (!hourTrips[routeKey][dir]) hourTrips[routeKey][dir] = [];
+      hourTrips[routeKey][dir].push(trip);
+    } 
   });
 
   // Now, for each route/direction, normalize trip counts by distance
   const hourCounts = {};
-  Object.keys(hourTrips).forEach(routeId => {
-    hourCounts[routeId] = {};
-    Object.keys(hourTrips[routeId]).forEach(dir => {
-      const tripsArr = hourTrips[routeId][dir];
+  Object.keys(hourTrips).forEach(routeKey => {
+    hourCounts[routeKey] = {};
+    Object.keys(hourTrips[routeKey]).forEach(dir => {
+      const tripsArr = hourTrips[routeKey][dir];
       // Get distances for each trip
       const dists = tripsArr.map(trip => shapeIdToDistance[trip.shape_id] || 0);
-      const commonDist = mostCommonShapeDistByRouteDir[routeId] && mostCommonShapeDistByRouteDir[routeId][dir]
-        ? mostCommonShapeDistByRouteDir[routeId][dir]
-        : 1;      
+      const commonDist = mostCommonShapeDistByRouteDir[routeKey] && mostCommonShapeDistByRouteDir[routeKey][dir]
+        ? mostCommonShapeDistByRouteDir[routeKey][dir]
+        : 1;
       // Normalize: full-length or longer trips count as 1, shorter as proportion
       const normalized = dists.map(d => d >= commonDist ? 1 : d / commonDist);
-      hourCounts[routeId][dir] = normalized.reduce((a, b) => a + b, 0);
+      hourCounts[routeKey][dir] = normalized.reduce((a, b) => a + b, 0);
       //console.log(`For route ${routeId}: before normalization # of trips is ${tripsArr.length}. after normalization # of trips is ${normalized.reduce((a, b) => a + b, 0).toFixed(2)}. Normalization Trip Distance is ${mostCommonShapeDistByRouteDir[routeId][dir]} All Distance: ${dists}`);
     });
 
   });
 
   // Update the time series for each route
-  Object.keys(hourCounts).forEach(routeId => {
-    if (!tripsPerHourSeries[routeId]) tripsPerHourSeries[routeId] = [];
+  Object.keys(hourCounts).forEach(routeKey => {
+    if (!tripsPerHourSeries[routeKey]) tripsPerHourSeries[routeKey] = [];
     let yValue, annotation = null, pointStyle = 'circle';
 
     if (!hasDirectionId) {
       // No direction_id: sum all trips
-      yValue = Object.values(hourCounts[routeId]).reduce((a, b) => a + b, 0);
+      yValue = Object.values(hourCounts[routeKey]).reduce((a, b) => a + b, 0);
     } else {
-      const dirs = Object.keys(hourCounts[routeId]);
+      const dirs = Object.keys(hourCounts[routeKey]);
       if (dirs.length === 2) {
         // Both directions present: average
-        yValue = (hourCounts[routeId]['0'] + hourCounts[routeId]['1']) / 2;
+        yValue = (hourCounts[routeKey]['0'] + hourCounts[routeKey]['1']) / 2;
       } else if (dirs.length === 1) {
         hasOneDirectionalHourInPlot = true; // At least one route has only one direction
         // Only one direction present
-        yValue = hourCounts[routeId][dirs[0]];
+        yValue = hourCounts[routeKey][dirs[0]];
         annotation = 'Only one direction present';
         pointStyle = 'rectRot'; // Use a diamond shape for this case
       }
     }
 
-    tripsPerHourSeries[routeId].push({ x: hour, y: yValue, annotation, pointStyle });
+    if (yValue < 1) yValue = 1; //do not accept # of trips < 1
+    tripsPerHourSeries[routeKey].push({ x: hour, y: yValue, annotation, pointStyle });
   });
 
   // Also add zero for routes that had previous data but no trips this hour
-  Object.keys(tripsPerHourSeries).forEach(routeId => {
-    const last = tripsPerHourSeries[routeId][tripsPerHourSeries[routeId].length - 1];
+  Object.keys(tripsPerHourSeries).forEach(routeKey => {
+    const last = tripsPerHourSeries[routeKey][tripsPerHourSeries[routeKey].length - 1];
     if (last.x < hour) {
-      tripsPerHourSeries[routeId].push({ x: hour, y: 0 });
+      tripsPerHourSeries[routeKey].push({ x: hour, y: 0 });
     }
   });
 
   // Only plot top 10 routes by total trips so far
-  let totals = Object.entries(tripsPerHourSeries).map(([routeId, arr]) => ({
-    routeId,
+  let totals = Object.entries(tripsPerHourSeries).map(([routeKey, arr]) => ({
+    routeKey,
     total: arr.reduce((sum, pt) => sum + pt.y, 0)
   }));
   totals.sort((a, b) => b.total - a.total);
-  let top10 = totals.slice(0, 10).map(t => t.routeId);
+  let top10 = totals.slice(0, 10).map(t => t.routeKey);
 
-  tripsPerHourChart.data.datasets = top10.map((routeId, idx) => {
+  tripsPerHourChart.data.datasets = top10.map((routeKey, idx) => {
     const color = tripsPerHourColors[idx % tripsPerHourColors.length];
     return {
-      label: getRouteLabel(routeId),
-      data: tripsPerHourSeries[routeId],
+      label: getRouteLabel(routeKey.split('__')[0]) + (routeKey.split('__')[1] ? ` (${routeKey.split('__')[1]})` : ''),
+      data: tripsPerHourSeries[routeKey],
       borderColor: color,
       backgroundColor: color,
       fill: false,
       tension: 0.1,
       pointStyle: ctx => {
         const i = ctx.dataIndex;
-        const pt = tripsPerHourSeries[routeId][i];
+        const pt = tripsPerHourSeries[routeKey][i];
         return pt && pt.pointStyle ? pt.pointStyle : 'circle';
       },
       pointRadius: ctx => {
         const i = ctx.dataIndex;
-        const pt = tripsPerHourSeries[routeId][i];
+        const pt = tripsPerHourSeries[routeKey][i];
         if (!pt) return 3;
         if (pt.y === 0) return 1; // very small for zero trips
         if (pt.pointStyle === 'rectRot') return 10; // large for diamond
@@ -423,7 +497,7 @@ function updateTripsPerHourPlotForHour(hour) {
       },
       pointHoverRadius: ctx => {
         const i = ctx.dataIndex;
-        const pt = tripsPerHourSeries[routeId][i];
+        const pt = tripsPerHourSeries[routeKey][i];
         if (!pt) return 4;
         if (pt.y === 0) return 2;
         if (pt.pointStyle === 'rectRot') return 12;
@@ -458,7 +532,8 @@ function updateTripsPerHourPlotForHour(hour) {
       if (pt.y > 0) {
         pt.y = 60 / pt.y;
       } else {
-        pt.y = 0;
+        // Remove the last point if y == 0 (no trips)
+        pt.y = null;
       }
     }
   });

@@ -46,6 +46,11 @@ const FRAME_INTERVAL_MS = 100;   // real ms per frame
 const TIME_STEP_SEC    = 1;    // simulated seconds per frame
 let speedMultiplier = 10;
 
+let stopsById = new Map();           // stop_id -> {id,name,lat,lon}
+let shapesById = {};                 // shape_id -> [ {lat,lon,sequence,shape_dist_traveled}, ... ]
+let shapeCumulativeDist = {};        // shape_id -> [cumulative distances]
+let stopTimesByTripId = {};          // trip_id -> [ {trip_id,stop_id,arrival_time,departure_time,stop_sequence,departure_sec}, ... ]
+
 // === Initialize Leaflet Map ===
 const map = L.map('map').setView([0, 0], 13);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
@@ -80,110 +85,211 @@ async function loadGtfsFromUserUploadZip(file) {
     }
   };
   reader.readAsArrayBuffer(file);
-
 }
 
-async function LoadGTFSZipFile(zipFile) {
+
+async function LoadGTFSZipFile(zipFileInput) {
   try {
     showProgressBar();
-    setProgressBar(10);
-    await Promise.resolve();
+    setProgressBar(5);
 
     clearAllMapLayersAndMarkers();
-    const decoder = new TextDecoder();
 
-    // Check file sizes before decoding
-    const maxSize = 500 * 1024 * 1024; // 500 MB in bytes
-    for (const fname of ['stops.txt', 'routes.txt', 'trips.txt', 'shapes.txt', 'stop_times.txt']) {
-      const arr = zipFile[fname];
-      if (arr && arr.length > maxSize) {
-        alert(`${fname} is too large (${(arr.length / (1024*1024)).toFixed(1)} MB). Please use a smaller GTFS file (max 500 MB per file).`);
-        hideProgressBar();
-        return;
+    // We support three types of input:
+    // 1) File object (from input) -> read as ArrayBuffer (preferred)
+    // 2) ArrayBuffer or Uint8Array (raw zip bytes) -> preferred
+    // 3) Existing unzipped object { 'stops.txt': Uint8Array, ... } -> fallback (less efficient)
+    let rawZipBuffer = null;
+    let fallbackZipObj = null;
+
+    // detect type:
+    if (zipFileInput instanceof File) {
+      // read raw bytes
+      rawZipBuffer = await zipFileInput.arrayBuffer();
+    } else if (zipFileInput instanceof ArrayBuffer) {
+      rawZipBuffer = zipFileInput;
+    } else if (zipFileInput instanceof Uint8Array) {
+      rawZipBuffer = zipFileInput.buffer;
+    } else if (zipFileInput && typeof zipFileInput === 'object' && (zipFileInput['stops.txt'] || zipFileInput['routes.txt'])) {
+      // fallback: the user passed an already-unzipped object mapping names -> Uint8Array
+      fallbackZipObj = zipFileInput;
+    } else {
+      throw new Error('LoadGTFSZipFile: unsupported input type. Provide a File, ArrayBuffer, Uint8Array, or unzipped object.');
+    }
+
+    // If fallback path, do per-file size check as before (we have internal files)
+    const maxSize = 500 * 1024 * 1024; // 500MB
+    if (fallbackZipObj) {
+      for (const fname of ['stops.txt','routes.txt','trips.txt','shapes.txt','stop_times.txt']) {
+        const arr = fallbackZipObj[fname];
+        if (arr && arr.length > maxSize) {
+          alert(`${fname} is too large (${(arr.length / (1024*1024)).toFixed(1)} MB). Please use a smaller GTFS file (max 500 MB per file).`);
+          hideProgressBar();
+          return;
+        }
+      }
+    } else {
+      // optional: check rawZipBuffer overall size (not per-file)
+      if (rawZipBuffer.byteLength && rawZipBuffer.byteLength > 1024 * 1024 * 1024) { // 1GB arbitrary guard
+        // warn but not block
+        console.warn('Raw zip is very large:', rawZipBuffer.byteLength);
       }
     }
 
-    const stopsText = decoder.decode(zipFile['stops.txt']);
-    const routesText = decoder.decode(zipFile['routes.txt']);
-    setProgressBar(30);
-    await Promise.resolve();
+    // prepare variables for weighted progress (we'll fill weights after worker posts file sizes)
+    const fileProgress = {};
+    const weights = {};
+    let lastOverall = 0;
+    let worker = null;
 
-    const tripsText = decoder.decode(zipFile['trips.txt']);
-    const shapesText = decoder.decode(zipFile['shapes.txt']);
-    setProgressBar(50);
-    await Promise.resolve();
+    const results = await new Promise((resolve, reject) => {
+      worker = new Worker('gtfsWorker.js');
 
-    const stopTimesText = decoder.decode(zipFile['stop_times.txt']);
-    setProgressBar(70);
-    await Promise.resolve();
+      // When worker posts file sizes, we initialize weights and progress map
+      worker.onmessage = (ev) => {
+        const msg = ev.data;
+        if (!msg) return;
 
-    // --- Calendar files (may not exist) ---
-    let calendarText = null, calendarDatesText = null;
-    if (zipFile['calendar.txt']) {
-      calendarText = decoder.decode(zipFile['calendar.txt']);
-      calendar = parseCalendar(calendarText);
-    } else {
-      calendar = [];
-    }
-    if (zipFile['calendar_dates.txt']) {
-      calendarDatesText = decoder.decode(zipFile['calendar_dates.txt']);
-      calendarDates = parseCalendarDates(calendarDatesText);
-    } else {
-      calendarDates = [];
-    }
+        if (msg.type === 'files') {
+          // msg.files: { 'stops.txt': length, ... }
+          const filesObj = msg.files || {};
+          // compute weights by byte length
+          let total = 0;
+          Object.keys(filesObj).forEach(f => { total += filesObj[f] || 0; });
+          if (total > 0) {
+            Object.keys(filesObj).forEach(f => {
+              weights[f] = (filesObj[f] || 0) / total;
+              fileProgress[f] = 0;
+            });
+          } else {
+            // fallback equal weights
+            const keys = Object.keys(filesObj);
+            const w = keys.length ? 1 / keys.length : 0;
+            keys.forEach(f => { weights[f] = w; fileProgress[f] = 0; });
+          }
+          // small visual bump after init
+          setProgressBar(8);
+        } else if (msg.type === 'status') {
+          // show small visual bump on status messages
+          setProgressBar(Math.max(lastOverall, 8));
+          console.log('[Worker status]', msg.message);
+        } else if (msg.type === 'progress') {
+          // update per-file progress
+          if (msg.file && weights[msg.file] !== undefined) {
+            fileProgress[msg.file] = Math.max(0, Math.min(1, msg.progress || 0));
+          } else if (msg.file) {
+            // unknown file - add minimal weight (optional)
+            if (fileProgress[msg.file] === undefined) { fileProgress[msg.file] = Math.max(0, Math.min(1, msg.progress || 0)); weights[msg.file] = 0.0001; }
+            else fileProgress[msg.file] = Math.max(fileProgress[msg.file], Math.max(0, Math.min(1, msg.progress || 0)));
+          }
 
-    // Build service-date dictionary
-    buildServiceDateDict();
+          // compute weighted average
+          let weighted = 0;
+          let sumW = 0;
+          Object.keys(weights).forEach(f => {
+            const w = weights[f] || 0;
+            weighted += w * (fileProgress[f] || 0);
+            sumW += w;
+          });
+          const avg = sumW > 0 ? (weighted / sumW) : 0;
 
-    stops = parseStops(stopsText);
-    await Promise.resolve();
+          // map avg to 10..90 and ensure monotonic progress
+          let overall = 10 + Math.round(avg * 80);
+          overall = Math.max(lastOverall, overall);
+          lastOverall = overall;
+          setProgressBar(overall);
 
-    shapes = parseShapes(shapesText);
-    buildShapeIdToDistance();
-    await Promise.resolve();
+        } else if (msg.type === 'done') {
+          resolve(msg.results);
+        } else if (msg.type === 'error') {
+          reject(new Error(msg.message || 'Worker error'));
+        }
+      };
 
-    routes = parseRoutes(routesText);
-    await Promise.resolve();
+      worker.onerror = (errEv) => {
+        reject(errEv.error || new Error('Worker runtime error'));
+      };
 
-    trips = parseTrips(tripsText);
-    setProgressBar(90);
-    await Promise.resolve();
-
-    stopTimes = parseStopTimes(stopTimesText);
-    await Promise.resolve();
-
-    // Precompute trip start times (stop_sequence === 1)
-    tripStartTimeMap = {};
-    tripStopsMap     = {};
-    stopTimes.forEach(st => {
-      // start time
-      if (st.stop_sequence === 1) {
-        // Only set first departure or arrival
-        const t = tripStartTimeMap[st.trip_id];
-        const timeSec = timeToSeconds(st.departure_time || st.arrival_time);
-        if (t === undefined || timeSec < t) tripStartTimeMap[st.trip_id] = timeSec;
+      // Send data to worker.
+      // Preferred: transfer rawZipBuffer (zero-copy)
+      if (rawZipBuffer) {
+        // ensure we have an ArrayBuffer to transfer
+        const ab = (rawZipBuffer instanceof ArrayBuffer) ? rawZipBuffer : rawZipBuffer.buffer || rawZipBuffer;
+        worker.postMessage({ rawZip: ab }, [ab]);
+      } else if (fallbackZipObj) {
+        // fallback: send pre-unzipped files as before; transfer each buffer to avoid copying when possible
+        const transfer = [];
+        const cloneable = {};
+        Object.keys(fallbackZipObj).forEach(k => {
+          const v = fallbackZipObj[k];
+          cloneable[k] = v;
+          if (v && v.buffer) transfer.push(v.buffer);
+          else if (v instanceof ArrayBuffer) transfer.push(v);
+        });
+        worker.postMessage({ zipFile: cloneable }, transfer);
+      } else {
+        reject(new Error('No zip data to send to worker'));
       }
-      // stops map
-      if (!tripStopsMap[st.trip_id]) tripStopsMap[st.trip_id] = new Set();
-      tripStopsMap[st.trip_id].add(st.stop_id);
     });
 
+    // worker done; terminate
+    if (worker) {
+      try { worker.terminate(); } catch (e) {}
+      worker = null;
+    }
 
-   setProgressBar(98);
-    await Promise.resolve();
+    // UI bump to show near-complete parsing
+    setProgressBar(95);
 
+    // assign results back to your globals (unchanged from earlier)
+    stops = results.stops || [];
+    if (results.stopsById && !(results.stopsById instanceof Map)) {
+      stopsById = new Map(Object.entries(results.stopsById || {}).map(([k,v]) => [k, v]));
+    } else {
+      stopsById = results.stopsById || new Map();
+    }
+
+    shapes = results.shapes || [];
+    shapesById = results.shapesById || {};
+    shapeIdToDistance = results.shapeIdToDistance || {};
+    routes = results.routes || [];
+    trips = results.trips || [];
+    stopTimes = results.stop_times || [];
+    stopTimesByTripId = results.stopTimesByTripId || {};
+    tripStartTimeMap = results.tripStartTimeMap || {};
+
+    tripStopsMap = {};
+    if (results.tripStopsMap) {
+      Object.keys(results.tripStopsMap).forEach(k => {
+        try {
+          tripStopsMap[k] = new Set(results.tripStopsMap[k]);
+        } catch (e) {
+          tripStopsMap[k] = new Set(Array.isArray(results.tripStopsMap[k]) ? results.tripStopsMap[k] : []);
+        }
+      });
+    } else {
+      tripStopsMap = {};
+    }
+
+    calendar = results.calendar || [];
+    calendarDates = results.calendar_dates || [];
+
+    // post-parse initialization
+    buildServiceDateDict();
     initializeTripsRoutes(trips, routes);
-    plotStopsAndShapes();
+    plotFilteredStopsAndShapes();
+
     setProgressBar(100);
     setTimeout(hideProgressBar, 500);
-
-    // Show/hide filters based on calendar files
     updateServiceDateFilterUI();
+
   } catch (err) {
     hideProgressBar();
     console.error('Failed to process GTFS ZIP:', err);
   }
 }
+
+
 
 let shapeIdToDistance = {};
 function buildShapeIdToDistance() {
@@ -248,10 +354,10 @@ function clearAllMapLayersAndMarkers() {
 
 
 //#region ParseData
-function parseStops(text) {
-  const lines = text.trim().split('\n');
+function parseStopsIntoMap(text) {
+  const lines = text.trim().split(/\r?\n/);
+  if (!lines.length) return [];
   const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-
   const idIndex = headers.indexOf('stop_id');
   const nameIndex = headers.indexOf('stop_name');
   const latIndex = headers.indexOf('stop_lat');
@@ -261,22 +367,31 @@ function parseStops(text) {
     throw new Error('Missing stop_lat or stop_lon columns in stops.txt');
   }
 
-  return lines.slice(1).map(row => {
-    const cols = row.split(',').map(col => col.trim()); 
-    return {
-      id: cols[idIndex],
-      name: cols[nameIndex],
+  stops = [];
+  stopsById = new Map();
+
+  for (let i = 1; i < lines.length; i++) {
+    const row = lines[i];
+    if (!row) continue;
+    const cols = row.split(','); // still naive but same interface as before
+    const obj = {
+      id: cols[idIndex] ? cols[idIndex].trim() : '',
+      name: cols[nameIndex] ? cols[nameIndex].trim() : '',
       lat: parseFloat(cols[latIndex]),
       lon: parseFloat(cols[lonIndex])
     };
-  });
+    stops.push(obj);
+    if (obj.id) stopsById.set(obj.id, obj);
+  }
+
+  return stops;
 }
 
 
-function parseShapes(text) {
-  const lines = text.trim().split('\n');
+function parseShapesIntoGroups(text) {
+  const lines = text.trim().split(/\r?\n/);
+  if (!lines.length) return [];
   const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-
   const shapeIDIndex = headers.indexOf('shape_id');
   const shapeLatIndex = headers.indexOf('shape_pt_lat');
   const shapeLonIndex = headers.indexOf('shape_pt_lon');
@@ -287,21 +402,45 @@ function parseShapes(text) {
     throw new Error('Missing required columns in shapes.txt');
   }
 
-  if (shapeDistIndex === -1) {
-    console.log('No shape_dist_traveled columns provided in shapes.txt');
+  // We'll also maintain the original `shapes` flat array for compatibility
+  shapes = [];
+  shapesById = {};
+
+  for (let i = 1; i < lines.length; i++) {
+    const row = lines[i];
+    if (!row) continue;
+    const cols = row.split(',');
+    const sid = cols[shapeIDIndex] ? cols[shapeIDIndex].trim() : '';
+    const lat = parseFloat(cols[shapeLatIndex]);
+    const lon = parseFloat(cols[shapeLonIndex]);
+    const seq = parseInt(cols[shapeSeqIndex], 10);
+    const dist = shapeDistIndex !== -1 ? parseFloat(cols[shapeDistIndex]) : undefined;
+
+    const obj = { shape_id: sid, lat, lon, sequence: seq, shape_dist_traveled: dist };
+    shapes.push(obj);
+    if (!shapesById[sid]) shapesById[sid] = [];
+    shapesById[sid].push(obj);
   }
 
-  return lines.slice(1).map(row => {
-    const cols = row.split(',').map(col => col.trim());
-    return {
-      shape_id: cols[shapeIDIndex],
-      lat: parseFloat(cols[shapeLatIndex]),
-      lon: parseFloat(cols[shapeLonIndex]),
-      sequence: parseInt(cols[shapeSeqIndex]),
-      shape_dist_traveled: shapeDistIndex !== -1 ? parseFloat(cols[shapeDistIndex]) : undefined
-    };
+  // Sort each shape's points by sequence and compute cumulative distances (single pass per shape)
+  shapeCumulativeDist = {};
+  shapeIdToDistance = {}; // keep alias used elsewhere
+  Object.keys(shapesById).forEach(id => {
+    const pts = shapesById[id];
+    pts.sort((a,b) => a.sequence - b.sequence);
+    // compute cumulative distances
+    const cum = [0];
+    for (let k = 1; k < pts.length; k++) {
+      const d = calculateDistance(pts[k-1].lat, pts[k-1].lon, pts[k].lat, pts[k].lon);
+      cum.push(cum[cum.length - 1] + d);
+    }
+    shapeCumulativeDist[id] = cum;
+    shapeIdToDistance[id] = cum.length ? cum[cum.length - 1] : 0;
   });
+
+  return shapes;
 }
+
 
 function parseRoutes(text) {
   const lines = text.trim().split('\n');
@@ -363,36 +502,65 @@ function parseTrips(text) {
   });
 }
 
-function parseStopTimes(text) {
+function parseStopTimesIntoIndexes(text) {
   const lines = text.trim().split(/\r?\n/);
+  if (!lines.length) return [];
   const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+  const idx = {
+    trip_id: headers.indexOf('trip_id'),
+    arrival_time: headers.indexOf('arrival_time'),
+    departure_time: headers.indexOf('departure_time'),
+    stop_id: headers.indexOf('stop_id'),
+    stop_sequence: headers.indexOf('stop_sequence')
+  };
 
-  const tripIdIndex = headers.indexOf('trip_id');
-  const arrivalTimeIndex = headers.indexOf('arrival_time');
-  const departureTimeIndex = headers.indexOf('departure_time');
-  const stopIdIndex = headers.indexOf('stop_id');
-  const stopSequenceIndex = headers.indexOf('stop_sequence');
-
-  if (
-    tripIdIndex === -1 ||
-    arrivalTimeIndex === -1 ||
-    departureTimeIndex === -1 ||
-    stopIdIndex === -1 ||
-    stopSequenceIndex === -1
-  ) {
+  if (idx.trip_id === -1 || idx.stop_id === -1 || idx.stop_sequence === -1) {
     throw new Error('Missing required columns in stop_times.txt');
   }
 
-  return lines.slice(1).map(row => {
-    const cols = row.split(',').map(col => col.trim());
-    return {
-      trip_id: cols[tripIdIndex],
-      arrival_time: cols[arrivalTimeIndex],
-      departure_time: cols[departureTimeIndex],
-      stop_id: cols[stopIdIndex],
-      stop_sequence: parseInt(cols[stopSequenceIndex])
+  stopTimes = []; // keep flat array for compatibility
+  stopTimesByTripId = {};
+  tripStartTimeMap = {}; // clear and build here
+  tripStopsMap = {};     // clear and build here
+
+  for (let i = 1; i < lines.length; i++) {
+    const row = lines[i];
+    if (!row) continue;
+    const cols = row.split(',');
+    const tripId = cols[idx.trip_id] ? cols[idx.trip_id].trim() : '';
+    const stopId = cols[idx.stop_id] ? cols[idx.stop_id].trim() : '';
+    const seq = parseInt(cols[idx.stop_sequence], 10) || 0;
+    const arrival = cols[idx.arrival_time] ? cols[idx.arrival_time].trim() : '';
+    const departure = cols[idx.departure_time] ? cols[idx.departure_time].trim() : (arrival || '');
+    const departureSec = departure ? timeToSeconds(departure) : null;
+
+    const stObj = {
+      trip_id: tripId,
+      arrival_time: arrival,
+      departure_time: departure,
+      stop_id: stopId,
+      stop_sequence: seq,
+      departure_sec: departureSec
     };
+    stopTimes.push(stObj);
+
+    if (!stopTimesByTripId[tripId]) stopTimesByTripId[tripId] = [];
+    stopTimesByTripId[tripId].push(stObj);
+
+    if (!tripStopsMap[tripId]) tripStopsMap[tripId] = new Set();
+    if (stopId) tripStopsMap[tripId].add(stopId);
+
+    if (departureSec !== null) {
+      const t = tripStartTimeMap[tripId];
+      if (t === undefined || departureSec < t) tripStartTimeMap[tripId] = departureSec;
+    }
+  }
+  // sort each trip's stop_times by stop_sequence
+  Object.keys(stopTimesByTripId).forEach(tid => {
+    stopTimesByTripId[tid].sort((a,b) => a.stop_sequence - b.stop_sequence);
   });
+
+  return stopTimes;
 }
 
 // --- Calendar Parsing ---
@@ -556,6 +724,17 @@ function updateServiceDateFilterUI() {
       options.push(`<option value="${date}">${y}-${m}-${d}</option>`);
     }
     serviceDateSelect.innerHTML = options.join('');
+    
+    // --- Limit to 2 selections ---
+    serviceDateSelect.onchange = function(e) {
+      const selected = Array.from(this.selectedOptions);
+      if (selected.length > 2) {
+        // Deselect the last selected option
+        selected[selected.length - 1].selected = false;
+        alert('You can select up to 2 service dates only.');
+      }
+      filterTrips();
+    };
   } else {
     // Hide service-date, show serviceId
     serviceDateLabel.style.display = 'none';
@@ -648,37 +827,55 @@ function populateFilters() {
   rtSel.dispatchEvent(new Event('change'));
 }
 
+let filteredTrips1 = [];
+let filteredTrips2 = [];
 
 function filterTrips() {
   const types = Array.from(document.getElementById('routeTypeSelect').selectedOptions).map(o => o.value);
   const names = Array.from(document.getElementById('routeShortNameSelect').selectedOptions).map(o => o.value);
   
+  filteredTrips1 = [];
+  filteredTrips2 = [];
+
   if (serviceDateFilterMode) {
     const sdSel = document.getElementById('serviceDateSelect');
     const selectedDates = Array.from(sdSel.selectedOptions).map(o => o.value);
 
-    // Gather all service_ids for selected dates/generic weekdays
-    let selectedServiceIds = new Set();
+    let selectedServiceIdsArr = [];
     for (const val of selectedDates) {
+      let ids = new Set();
       if (val.startsWith('GENERIC:')) {
         const label = val.slice(8);
         (genericWeekdayDates[label] || []).forEach(date => {
-          (serviceDateDict[date] || []).forEach(sid => selectedServiceIds.add(sid));
+          (serviceDateDict[date] || []).forEach(sid => ids.add(sid));
         });
       } else {
-        (serviceDateDict[val] || []).forEach(sid => selectedServiceIds.add(sid));
+        (serviceDateDict[val] || []).forEach(sid => ids.add(sid));
       }
+      selectedServiceIdsArr.push(ids);
     }
-    filteredTrips = trips.filter(t =>
-      types.includes(t.route.route_type) &&
-      names.includes(`${t.route.route_short_name}-${t.route.route_long_name}`) &&
-      selectedServiceIds.has(t.service_id)
-    );
+
+    // Filter for each service date
+    if (selectedServiceIdsArr.length > 0) {
+      filteredTrips1 = trips.filter(t =>
+        types.includes(t.route.route_type) &&
+        names.includes(`${t.route.route_short_name}-${t.route.route_long_name}`) &&
+        selectedServiceIdsArr[0].has(t.service_id)
+      );
+    }
+    if (selectedServiceIdsArr.length > 1) {
+      filteredTrips2 = trips.filter(t =>
+        types.includes(t.route.route_type) &&
+        names.includes(`${t.route.route_short_name}-${t.route.route_long_name}`) &&
+        selectedServiceIdsArr[1].has(t.service_id)
+      );
+    }
     
-    filteredTripsOtherTry = trips.filter(t =>   
-      types.includes(t.route.route_type) &&   
-      selectedServiceIds.has(t.service_id)
-    );
+    const tripMap = new Map();
+    [...filteredTrips1, ...filteredTrips2].forEach(t => {
+      tripMap.set(t.trip_id, t);
+    });
+    filteredTrips = Array.from(tripMap.values());
 
   } else {
     const services = Array.from(document.getElementById('serviceIdSelect').selectedOptions).map(o => o.value);
@@ -687,46 +884,80 @@ function filterTrips() {
       names.includes(`${t.route.route_short_name}-${t.route.route_long_name}`) &&
       services.includes(t.service_id)
     );
+    filteredTrips1 = filteredTrips;
+    filteredTrips2 = [];
   }
 }
 
-// === Filter geometry by filteredTrips ===
-function filterStopsAndShapesForTrips(tripsToShow) {
-  if (stopsLayer)  map.removeLayer(stopsLayer);
-  if (shapesLayer) map.removeLayer(shapesLayer);
+function plotFilteredStopsAndShapes(tripsToShow) {
+  // Remove old layers
+  if (stopsLayer && map.hasLayer(stopsLayer)) map.removeLayer(stopsLayer);
+  if (shapesLayer && map.hasLayer(shapesLayer)) map.removeLayer(shapesLayer);
 
-  stopsLayer  = L.layerGroup();
-  shapesLayer = L.layerGroup();
+  // --- decide which stops/shapes to plot (unchanged) ---
+  let stopsToPlot, shapesToPlot;
 
-  const usedStops  = new Set();
-  const usedShapes = new Set();
-  tripsToShow.forEach(t => {
-    usedShapes.add(t.shape_id);
-    (tripStopsMap[t.trip_id] || []).forEach(id => usedStops.add(id));
-  });
+  if (Array.isArray(tripsToShow) && tripsToShow.length > 0) {
+    const usedStops = new Set();
+    const usedShapes = new Set();
+    tripsToShow.forEach(t => {
+      usedShapes.add(t.shape_id);
+      (tripStopsMap[t.trip_id] || []).forEach(id => usedStops.add(id));
+    });
+    stopsToPlot = stops.filter(s => usedStops.has(s.id));
+    shapesToPlot = shapes.filter(s => usedShapes.has(s.shape_id));
+  } else {
+    stopsToPlot = stops;
+    shapesToPlot = shapes;
+  }
 
-  stops.filter(s => usedStops.has(s.id))
-       .forEach(s => L.circleMarker([s.lat,s.lon],{radius:4,color:'red'}).bindTooltip(s.name).addTo(stopsLayer));
+  // --- Adaptive clustering: scale cluster radius by number of stops (continuous) ---
+  const totalStops = stopsToPlot.length;
 
-  const grp = {};
-  shapes.filter(p => usedShapes.has(p.shape_id))
-        .forEach(p => (grp[p.shape_id]||(grp[p.shape_id]=[])).push(p));
-  Object.values(grp).forEach(arr => {
-    const pts = arr.sort((a,b)=>a.sequence-b.sequence).map(p=>[p.lat,p.lon]);
-    L.polyline(pts,{color:'blue',weight:2}).addTo(shapesLayer);
-  });
+  // Parameters you can tune:
+  const basePixels = 60;         // pixel radius at ref zoom when scale==1
+  const refZoom = 14;            // zoom where basePixels is meaningful
+  const clampMaxPx = 100;        // absolute max pixel radius to avoid giant bubbles
+  const minMultiplier = 0.20;    // smallest fraction of basePixels when stops are few
+  const minCount = 200;          // lower edge of scaling (below this -> mostly small radius)
+  const maxCount = 3000;        // upper edge of scaling (above this -> full radius)
 
-  stopsLayer.addTo(map);
-  shapesLayer.addTo(map);
-}
+  // Optional: skip markercluster plugin overhead entirely below this count
+  const skipPluginBelow = 200;
 
+  // smoothstep helper: maps x in [a,b] -> 0..1 smoothly
+  function smoothstep(a, b, x) {
+    if (x <= a) return 0;
+    if (x >= b) return 1;
+    const t = (x - a) / (b - a);
+    return t * t * (3 - 2 * t);
+  }
 
-// === Plot initial GTFS stops & shapes ===
-function plotStopsAndShapes() {
-  stopsLayer = L.layerGroup();
-  shapesLayer = L.layerGroup();
+  // map count -> scale [0..1]
+  const rawScale = smoothstep(minCount, maxCount, totalStops);
+  // final multiplier between minMultiplier .. 1.0
+  const multiplier = minMultiplier + (1 - minMultiplier) * rawScale;
 
-  for (const stop of stops) {
+  // Create stopsLayer using a radius function that incorporates multiplier
+  stopsLayer = (typeof L.markerClusterGroup === 'function')
+    ? L.markerClusterGroup({
+        chunkedLoading: true,
+        // maxClusterRadius gets zoom param -> return pixel radius
+        maxClusterRadius: function (zoom) {
+          // exponential zoom scaling (same idea as before): basePixels * 2^(refZoom - zoom)
+          const zoomScaledBase = basePixels * Math.pow(2, refZoom - zoom);
+          const px = Math.max(6, Math.round(zoomScaledBase * multiplier));
+          return Math.min(clampMaxPx, px);
+        },
+        chunkInterval: 200,
+        chunkDelay: 40
+      })
+    : L.layerGroup();
+
+     if (totalStops <= skipPluginBelow) stopsLayer = L.layerGroup();
+
+  // --- Add clustered stops ---
+  for (const stop of stopsToPlot) {
     const marker = L.circleMarker([stop.lat, stop.lon], {
       radius: 4,
       color: 'red',
@@ -736,12 +967,13 @@ function plotStopsAndShapes() {
     stopsLayer.addLayer(marker);
   }
 
+  // --- Add shapes (unchanged) ---
+  shapesLayer = L.layerGroup();
   const shapesById = {};
-  for (const s of shapes) {
+  for (const s of shapesToPlot) {
     if (!shapesById[s.shape_id]) shapesById[s.shape_id] = [];
     shapesById[s.shape_id].push(s);
   }
-
   for (const shape_id in shapesById) {
     const shapePoints = shapesById[shape_id]
       .sort((a, b) => a.sequence - b.sequence)
@@ -756,16 +988,20 @@ function plotStopsAndShapes() {
   stopsLayer.addTo(map);
   shapesLayer.addTo(map);
 
-  const allCoords = [...stops.map(s => [s.lat, s.lon]), ...shapes.map(s => [s.lat, s.lon])];
-  const bounds = L.latLngBounds(allCoords);
-  map.fitBounds(bounds);
+  // Fit bounds
+  const allCoords = [
+    ...stopsToPlot.map(s => [s.lat, s.lon]),
+    ...shapesToPlot.map(s => [s.lat, s.lon])
+  ];
+  if (allCoords.length) {
+    const bounds = L.latLngBounds(allCoords);
+    map.fitBounds(bounds);
+  }
+
+  // --- Debug / tuning logs (remove in production) ---
+  // console.log('stopsCount=', totalStops, 'scale=', rawScale.toFixed(2), 'mult=', multiplier.toFixed(2));
 }
 
-// === Utility: Parse HH:MM:SS into seconds ===
-function timeToSeconds(t) {
-  const [h, m, s] = t.split(':').map(Number);
-  return h * 3600 + m * 60 + s;
-}
 
 function calculateDistance(lat1, lon1, lat2, lon2) {
   const R = 6371000;
@@ -774,6 +1010,13 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
   const dLon = toRad(lon2 - lon1);
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+
+// === Utility: Parse HH:MM:SS into seconds ===
+function timeToSeconds(t) {
+  const [h, m, s] = t.split(':').map(Number);
+  return h * 3600 + m * 60 + s;
 }
 
 // === Interpolate times between stops (distance-based) ===
@@ -806,6 +1049,7 @@ function initializeAnimation() {
   // Clear the trip plot data
   tripPlotData.labels = [];
   tripPlotData.datasets[0].data = [];
+  tripPlotData.datasets[1].data = [];
   if (tripPlotChart) tripPlotChart.update();
   hourTicks = [];
 
@@ -817,11 +1061,15 @@ function initializeAnimation() {
     vehKmChart.update();
   }
 
+  // For coloring and plotting
+  window.tripIds1 = new Set(filteredTrips1.map(t => t.trip_id));
+  window.tripIds2 = new Set(filteredTrips2.map(t => t.trip_id));
+
   if (!filteredTrips.length) { alert('No trips match filters'); return; }
-// compute startTime for filtered trips and find earliest
+  // compute startTime for filtered trips and find earliest
 
   // filter geometry
-  filterStopsAndShapesForTrips(filteredTrips);
+  plotFilteredStopsAndShapes(filteredTrips);
 
   // prepare remaining
   remainingTrips = filteredTrips.map(t => {
@@ -876,7 +1124,7 @@ function UpdateAnimationOnAnimationTimeChange(){
 
   const currentHour = Math.floor(animationTime / 3600);
   if (lastTripsPerHourUpdateHour === null || currentHour > lastTripsPerHourUpdateHour) {
-    updateTripsPerHourPlotForHour(currentHour - 1); // Show stats for the previous hour
+    updateHeadwayPlotForHour(currentHour - 1); // Show stats for the previous hour
     lastTripsPerHourUpdateHour = currentHour;
   }
 }
@@ -898,7 +1146,13 @@ function UpdateVehiclePositions(){
             }else{
             }
           } else {
-            const m = L.circleMarker([path[0].lat, path[0].lon], { radius: 6, color: 'green', fillColor: 'green', fillOpacity: 1 }).addTo(map);
+            const m = L.circleMarker([path[0].lat, path[0].lon], {
+              radius: 6,
+              color: (window.tripIds2 && window.tripIds2.has(t.trip_id) && (!window.tripIds1 || !window.tripIds1.has(t.trip_id))) ? 'orange' : 'green',
+              fillColor: (window.tripIds2 && window.tripIds2.has(t.trip_id) && (!window.tripIds1 || !window.tripIds1.has(t.trip_id))) ? 'orange' : 'green',
+              fillOpacity: 1
+            }).addTo(map);
+            m.parentTrip = t; // Store reference to parent trip
             allVehicleMarkers.push(m);
             vehicleMarkersWithActiveTrip.push(m);
           }
@@ -1005,7 +1259,7 @@ function stopAnimation() {
 
     // append the final data point to the 
   const nextHour = Math.ceil(animationTime / 3600);
-  updateTripsPerHourPlotForHour(nextHour-1);
+  updateHeadwayPlotForHour(nextHour-1);
 
   // 3) Reset all trip/animation state
   tripPaths = [];
@@ -1099,7 +1353,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('updateMapBtn').addEventListener('click', function() {
     // Use the same logic as at the start of simulation
     stopAnimation();
-    filterStopsAndShapesForTrips(filteredTrips);
+    plotFilteredStopsAndShapes(filteredTrips);
   });
 
   document.getElementById('gtfsFileInput').addEventListener('change', (event) => {

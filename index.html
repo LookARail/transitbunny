@@ -180,7 +180,7 @@
     Help &amp; Instructions
     <button class="close-canvas-btn" style="margin-left:auto; background:none; border:none; color:#fff; font-size:1.3em; cursor:pointer;">✖</button>
   </div>
-  <div class="canvas-content" style="overflow-y:auto; max-height: 60vh;">
+  <div class="canvas-content">
     <h3>Welcome to the GTFS Web Client!</h3>
     <ul>
       <li><b>Load GTFS Data:</b> Click <b>Load My Own GTFS ZIP</b> to load your transit data. The page is pre-loaded with the default Vancouver GTFS dataset. The file format must be a ".zip" file containing standard static GTFS files such as "routes.txt", "trips.txt", and others</li>
@@ -220,5 +220,7 @@
   <script src="main.js"></script>
   <script src="graph.js"></script>
   <script src="locationScore.js"></script>
+  <link rel="stylesheet" href="libs/MarkerCluster.Default.css"/>
+  <script src="libs/leaflet.markercluster.js"></script>
 </body>
 </html>

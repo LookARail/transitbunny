@@ -368,11 +368,10 @@
 
 #statsCanvas .canvas-content {
   flex: 1 1 auto;
-  height: 100%;
+  height: auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
 }
 
 .canvas-header {
@@ -383,6 +382,7 @@
   font-weight: bold;
   display: flex;
   align-items: flex-end;  
+  flex: 0 0 auto; /* header stays its natural height */
 }
 
 .canvas-header .tab-btn {
@@ -427,7 +427,7 @@
   flex: 1;
   background: #f8fafc;
   padding: 18px 10px 10px 10px;
-  overflow: hidden;
+  overflow: auto;
   display: flex;
   flex-direction: column;
 }
@@ -442,16 +442,25 @@
 .tab-content.active { display: block; }
 
 #helpCanvas.floating-canvas {
+  position: fixed; /* so it floats */
   right: 32px;
   bottom: 80px; /* above the ribbon */
   width: 600px;
+  height: 60vh;
   max-width: 96vw;
   max-height: 60vh;
+  flex-direction: column; /* stack header + content */
 }
 
 #helpCanvas .canvas-content {
-  font-size: 1.05em;
-  line-height: 1.6;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 18px 10px 10px 10px;
+  background: #f8fafc;
+  display: block;
+  flex-direction: column;  
+  height: auto;
 }
 #helpCanvas ul {
   margin-left: 1.2em;
@@ -479,10 +488,6 @@
   cursor: se-resize;
   background: url('data:image/svg+xml;utf8,<svg width="16" height="16" xmlns="http://www.w3.org/2000/svg"><line x1="0" y1="16" x2="16" y2="0" stroke="gray" stroke-width="2"/></svg>') no-repeat center center;
   opacity: 0.5;
-}
-.canvas-content {
-  width: 100%;
-  height: 100%;
 }
 
 #transitScoreCanvas.floating-canvas {
