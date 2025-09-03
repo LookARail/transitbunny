@@ -7,12 +7,17 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />  
   <link rel="stylesheet" href="style.css" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link href="https://fonts.googleapis.com/css?family=Fredoka+One&display=swap" rel="stylesheet">
 </head>
 <body>
   <div id="map"></div>
 
-<div id="controls" >
-  <div class="main-menu-title">GTFS Data Sorce:</div>
+  <img id="mainLogo" src="TransitBunnyLogo.png" alt="Logo" />
+  <div id="controls" >
+  <div class="main-menu-title">Transit Bunny</div>
+  <span id="dataSourceLabel" style="font-size:1.1em; color:#001df5; margin-bottom:-5px; display:block;">
+    GTFS Data Source:
+  </span>
   <span id="dataSourceText" style="font-size:0.98em; color:#0078d7; margin-bottom:0px; display:block;">
     Default - Vancouver GTFS Data 2025-08-08
   </span>
@@ -23,8 +28,10 @@
       <div id="progressBar"></div>
     </div>
   </div>
-  
-  <div class="main-menu-title">Trip Filters</div>
+
+  <span id="dataSourceLabel" style="font-size:1.1em; color:#001df5; margin-bottom:-5px; display:block;">
+    Trip Filters:
+  </span>
   <div class="main-menu-filters">
     <!-- Route Type Filter -->
     <label>
@@ -181,18 +188,22 @@
     <button class="close-canvas-btn" style="margin-left:auto; background:none; border:none; color:#fff; font-size:1.3em; cursor:pointer;">✖</button>
   </div>
   <div class="canvas-content">
-    <h3>Welcome to the GTFS Web Client!</h3>
+    <h3>Welcome to Transit Bunny!</h3>
+    <h4>A tool that lets you look inside the GTFS transit schedule</h4>
     <ul>
-      <li><b>Load GTFS Data:</b> Click <b>Load My Own GTFS ZIP</b> to load your transit data. The page is pre-loaded with the default Vancouver GTFS dataset. The file format must be a ".zip" file containing standard static GTFS files such as "routes.txt", "trips.txt", and others</li>
+      <li> The page loads a version of the Vancouver GTFS dataset on startup, but you can load your own GTFS data! Click the <b>Load My Own GTFP ZIP:</b> button to load your transit data. The file format must be a ".zip" file containing standard static GTFS files such as "routes.txt", "trips.txt", etc.</li>
+      <li> The "clouds" with numbers represent the stops in the area.</li>
       <li><b>Filter Trips:</b> Use the filters to select route types, route names, and service patterns. Hover over the <b>filter labels</b> for more details. Click <b>Update Map</b> to update the map to match your selection </li>
       <li><b>Animation Controls:</b> Open the <b>Animation Controls</b> panel (▶️) to play, pause, or stop the animation. Adjust the speed as needed</li>
       <li><b>Graphs:</b> Open the <b>Graphs</b> panel (📈) with these graph options. <b>Graphs update in sync with the animation progress</b>
         <ul>
           <li><b>Number of Trips:</b> Shows the number of active vehicles over time</li>
           <li><b>Vehicle-Kilometer:</b> Shows cumulative vehicle-kilometers by route</li>
+          <li><b>Headway:</b> Shows the estimated headways by route</li>          
         </ul>
-      </li>
+      <li>You can multi-select two service-dates to animate! The plots will plot them separately for easier comparison !</li>
       <li><b>Statistics:</b> Open the <b>Statistics</b> panel (📊) for route-level stats. You can download the table as CSV. The statistics are independent from the animation progress</li>
+      <li><b>Transit Score:</b> Open the <b>Transit Score</b> panel (⭐). Then click anywhere on the map and the tool will give a score for that location based on the transit services in its proximity</li>
     </ul>
     <p style="font-size:0.95em; color:#2400f3;">
       Want more helps or features? Contact me on

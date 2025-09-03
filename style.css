@@ -13,7 +13,7 @@
     #controls {
       position: absolute;
       top: 24px;
-      left: 24px;
+      left: 56px;
       z-index: 1000;
       background: rgba(255,255,255,0.97);
       padding: 18px 22px 14px 22px;
@@ -157,9 +157,11 @@
 }
 
 .main-menu-title {
-  font-size: 1.15rem;
+  font-family: 'Fredoka One', 'Segoe UI', Arial, sans-serif;
+  font-size: 1.5rem;
   font-weight: bold;
-  margin-bottom: 6px;
+  margin-left: 60px;
+  margin-bottom: 2px;
   color: #0078d7;
   letter-spacing: 0.5px;
 }
@@ -329,7 +331,7 @@
 
 /* Animation controls: bottom left */
 #animationCanvas.floating-canvas {
-  left: 24px;
+  left: 56px;
   bottom: 80px; /* above the ribbon */
   width: 380px;
   max-width: 96vw;
@@ -515,6 +517,15 @@
 .close-canvas-btn:hover {
   opacity: 1 !important;
   color: #ff5252 !important;
+}
+
+#mainLogo {
+  position: absolute;
+  top: 0px;
+  left: 60px;
+  width: 80px;
+  z-index: 1100;
+  pointer-events: none;
 }
 
 @media (max-width: 900px) {
