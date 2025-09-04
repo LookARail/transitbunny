@@ -14,7 +14,7 @@
 
   <img id="mainLogo" src="TransitBunnyLogo.png" alt="Logo" />
   <div id="controls" >
-  <div class="main-menu-title">Transit Bunny</div>
+  <div id="transitbunnylogo" class="main-menu-title">Transit Bunny</div>
   <span id="dataSourceLabel" style="font-size:1.1em; color:#001df5; margin-bottom:-5px; display:block;">
     GTFS Data Source:
   </span>
@@ -72,6 +72,10 @@
         </span>
       </span>
       <select id="serviceDateSelect" multiple size="4" style="min-width: 120px;"></select>
+    </label>
+    <label class="inline-checkbox">
+      <input type="checkbox" id="aggregateStops" />
+      <span>Cluster Stops?</span>
     </label>
     <button id="updateMapBtn" style="margin-top:12px;">Update Map</button>
   </div>
@@ -235,4 +239,3 @@
   <script src="libs/leaflet.markercluster.js"></script>
 </body>
 </html>
-

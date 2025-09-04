@@ -889,6 +889,8 @@ function filterTrips() {
   }
 }
 
+// Skip markercluster plugin overhead entirely below this count
+let skipAggregatingStopThreshold = 200;
 function plotFilteredStopsAndShapes(tripsToShow) {
   // Remove old layers
   if (stopsLayer && map.hasLayer(stopsLayer)) map.removeLayer(stopsLayer);
@@ -922,9 +924,6 @@ function plotFilteredStopsAndShapes(tripsToShow) {
   const minCount = 200;          // lower edge of scaling (below this -> mostly small radius)
   const maxCount = 3000;        // upper edge of scaling (above this -> full radius)
 
-  // Optional: skip markercluster plugin overhead entirely below this count
-  const skipPluginBelow = 200;
-
   // smoothstep helper: maps x in [a,b] -> 0..1 smoothly
   function smoothstep(a, b, x) {
     if (x <= a) return 0;
@@ -954,7 +953,7 @@ function plotFilteredStopsAndShapes(tripsToShow) {
       })
     : L.layerGroup();
 
-     if (totalStops <= skipPluginBelow) stopsLayer = L.layerGroup();
+     if (totalStops <= skipAggregatingStopThreshold) stopsLayer = L.layerGroup();
 
   // --- Add clustered stops ---
   for (const stop of stopsToPlot) {
@@ -1456,5 +1455,12 @@ window.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => { canvas.style.zIndex = 1500; }, 200);
       }
     });
+  });
+  
+
+  document.getElementById('aggregateStops').checked = true;
+  document.getElementById('aggregateStops').addEventListener('change', function() {
+    skipAggregatingStopThreshold = this.checked ? 200 : Infinity; 
+    plotFilteredStopsAndShapes(filteredTrips);
   });
 });

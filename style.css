@@ -528,6 +528,23 @@
   pointer-events: none;
 }
 
+#controls label.inline-checkbox,
+.main-menu-filters label.inline-checkbox {
+  display: inline-flex;     /* must be inline so it sits on same row */
+  flex-direction: row;      /* ensure children are side-by-side */
+  align-items: center;      /* vertical centering */
+  margin-bottom: -10px;      /* override default label margin */
+  gap: 6px;
+  white-space: nowrap;      /* prevent wrapping */
+}
+
+#controls .inline-checkbox input,
+.main-menu-filters .inline-checkbox input {
+  display: inline-block;
+  margin: 0;
+  vertical-align: middle;
+}
+
 @media (max-width: 900px) {
   .main-menu-panel {
     left: 2vw;
