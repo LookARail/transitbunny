@@ -1455,12 +1455,12 @@ window.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => { canvas.style.zIndex = 1500; }, 200);
       }
     });
-  });
-  
+  });  
 
   document.getElementById('aggregateStops').checked = true;
   document.getElementById('aggregateStops').addEventListener('change', function() {
     skipAggregatingStopThreshold = this.checked ? 200 : Infinity; 
     plotFilteredStopsAndShapes(filteredTrips);
   });
+
 });
