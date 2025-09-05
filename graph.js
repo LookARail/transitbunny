@@ -95,8 +95,8 @@ function updateTripPlot(currentTime) {
         currentHour > hourTicks[hourTicks.length - 1]
       ) {
         hourTicks.push(currentHour);
-        // Only insert hour tick if last label is not already the hour label
-        if (tripPlotChart.data.labels[tripPlotChart.data.labels.length - 2] !== hourLabel) {
+        // Only insert hour tick if last label is not already the hour label. And insert the whole hour tick before the last label
+        if (tripPlotChart.data.labels[tripPlotChart.data.labels.length - 1] !== hourLabel) {
           const insertIndex = tripPlotChart.data.labels.length - 1;
           tripPlotChart.data.labels.splice(insertIndex, 0, hourLabel);
         }
