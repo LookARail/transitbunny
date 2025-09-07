@@ -51,6 +51,19 @@ let shapesById = {};                 // shape_id -> [ {lat,lon,sequence,shape_di
 let shapeCumulativeDist = {};        // shape_id -> [cumulative distances]
 let stopTimesByTripId = {};          // trip_id -> [ {trip_id,stop_id,arrival_time,departure_time,stop_sequence,departure_sec}, ... ]
 
+const ROUTE_TYPE_NAMES = {
+  0: "Tram, Streetcar, Light rail",
+  1: "Subway, Metro",
+  2: "Rail",
+  3: "Bus",
+  4: "Ferry",
+  5: "Cable tram",
+  6: "Aerial lift",
+  7: "Funicular",
+  11: "Trolleybus",
+  12: "Monorail"
+};
+
 // === Initialize Leaflet Map ===
 const map = L.map('map').setView([0, 0], 13);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
@@ -786,7 +799,10 @@ function populateFilters() {
   const svSel = document.getElementById('serviceIdSelect');
   const sdSel = document.getElementById('serviceDateSelect');
 
-  rtSel.innerHTML = routeTypes.map(v=>`<option value="${v}">${v}</option>`).join('');
+  rtSel.innerHTML = routeTypes.map(v => {
+    const label = ROUTE_TYPE_NAMES[v] ? `${v} - ${ROUTE_TYPE_NAMES[v]}` : v;
+    return `<option value="${v}">${label}</option>`;
+  }).join('');
   svSel.innerHTML = serviceIds.map(v=>`<option value="${v}">${v}</option>`).join('');
   rtSel.onchange = filterTrips;
   svSel.onchange = filterTrips;
@@ -1320,15 +1336,29 @@ function changeAnimationSpeed(){
 function showProgressBar() {
   document.getElementById('progressBarContainer').style.display = 'block';
   setProgressBar(0);
+   document.getElementById('uiBlockOverlay').style.display = 'block'; //when loading data, block UI interaction
+
 }
 function setProgressBar(percent) {
   document.getElementById('progressBar').style.width = percent + '%';
+  document.getElementById('progressBarText').textContent = `Loading GTFS File: ${Math.round(percent)}%`;
 }
 function hideProgressBar() {
   document.getElementById('progressBarContainer').style.display = 'none';
+  document.getElementById('uiBlockOverlay').style.display = 'none'; // unlock UI interaction
 }
 
-
+function showTransitScorePopup(msg) {
+  const popup = document.getElementById('transitScorePopup');
+  if (!popup) return;
+  popup.textContent = msg;
+  popup.classList.add('show');
+  popup.style.display = 'block';
+  setTimeout(() => {
+    popup.classList.remove('show');
+    setTimeout(() => { popup.style.display = 'none'; }, 400);
+  }, 3000);
+}
 
 // === Run on Load ===
 window.addEventListener('DOMContentLoaded', () => {
@@ -1421,7 +1451,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.querySelector('.ribbon-icon[data-canvas="helpCanvas"]').click();
 
   // Make some of the canvas draggable
-  ['graphsCanvas', 'statsCanvas', 'helpCanvas'].forEach(canvasId => {
+  ['graphsCanvas', 'statsCanvas', 'helpCanvas', 'animationCanvas'].forEach(canvasId => {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
     const header = canvas.querySelector('.canvas-header');
@@ -1455,12 +1485,12 @@ window.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => { canvas.style.zIndex = 1500; }, 200);
       }
     });
-  });  
+  });
+  
 
   document.getElementById('aggregateStops').checked = true;
   document.getElementById('aggregateStops').addEventListener('change', function() {
     skipAggregatingStopThreshold = this.checked ? 200 : Infinity; 
     plotFilteredStopsAndShapes(filteredTrips);
   });
-
 });

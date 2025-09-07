@@ -281,6 +281,29 @@ function setupCompareServiceDatesFeature() {
       let routeName = route ? `${route.route_short_name} - ${route.route_long_name}` : '';
       let stats1 = t1.length ? computeStats(t1) : { nTrips:'', totalKm:'', avgTripTime:'' };
       let stats2 = t2.length ? computeStats(t2) : { nTrips:'', totalKm:'', avgTripTime:'' };
+      
+      // Log travel times for debugging
+      if (t1.length) {
+        const travelTimes1 = t1.map(trip => {
+          const tripStops = tripStopsMap_analysis[trip.trip_id] || [];
+          if (tripStops.length < 2) return { trip_id: trip.trip_id, travelTimeMin: null };
+          const start = timeToSeconds(tripStops[0].departure_time || tripStops[0].arrival_time);
+          const end = timeToSeconds(tripStops[tripStops.length - 1].arrival_time || tripStops[tripStops.length - 1].departure_time);
+          return { trip_id: trip.trip_id, travelTimeMin: ((end - start) / 60).toFixed(1) };
+        });
+        console.log(`Travel times for ${routeName} (${route_id}) on Date 1:`, travelTimes1);
+      }
+      if (t2.length) {
+        const travelTimes2 = t2.map(trip => {
+          const tripStops = tripStopsMap_analysis[trip.trip_id] || [];
+          if (tripStops.length < 2) return { trip_id: trip.trip_id, travelTimeMin: null };
+          const start = timeToSeconds(tripStops[0].departure_time || tripStops[0].arrival_time);
+          const end = timeToSeconds(tripStops[tripStops.length - 1].arrival_time || tripStops[tripStops.length - 1].departure_time);
+          return { trip_id: trip.trip_id, travelTimeMin: ((end - start) / 60).toFixed(1) };
+        });
+        console.log(`Travel times for ${routeName} (${route_id}) on Date 2:`, travelTimes2);
+      }
+      
       rows.push([
         routeName,
         route_id,

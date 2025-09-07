@@ -156,10 +156,74 @@ function setupTransitScoreMapClickHandler() {
     if (!isActive) return;
     
     if (!filteredTrips || filteredTrips.length === 0) {
-      // Show no data message
-      const valueElem = document.getElementById('transitScoreValue');
-      valueElem.innerHTML = `<span style="color:#e53935;">No routes and service patterns selected </span>`;
-      return;
+      // 1. Select all route types
+      const rtSel = document.getElementById('routeTypeSelect');
+      if (rtSel) {
+        for (let i = 0; i < rtSel.options.length; i++) {
+          rtSel.options[i].selected = true;
+        }
+        // Trigger the onchange event to repopulate routeShortNameSelect
+        rtSel.dispatchEvent(new Event('change'));
+      }
+
+      // 2. Select all route short names
+      const rsnSel = document.getElementById('routeShortNameSelect');
+      if (rsnSel) {
+        for (let i = 0; i < rsnSel.options.length; i++) {
+          rsnSel.options[i].selected = true;
+        }
+        rsnSel.dispatchEvent(new Event('change'));
+      }
+
+      // 3. Select the first weekday service date (GENERIC:Monday, etc.)
+      const sdSel = document.getElementById('serviceDateSelect');
+      if (sdSel) {
+        // Find the first option that starts with "GENERIC:"
+        let found = false;
+        for (let i = 0; i < sdSel.options.length; i++) {
+          if (sdSel.options[i].value.startsWith("GENERIC:")) {
+            // Deselect all, then select this one
+            for (let j = 0; j < sdSel.options.length; j++) {
+              sdSel.options[j].selected = false;
+            }
+            sdSel.options[i].selected = true;
+            found = true;
+            break;
+          }
+        }
+        // If not found, just select the first available date
+        if (!found && sdSel.options.length > 0) {
+          for (let j = 0; j < sdSel.options.length; j++) {
+              sdSel.options[j].selected = false;
+            }
+            // Try to find the first weekday (Mon-Fri)
+            let selected = false;
+            for (let j = 0; j < sdSel.options.length; j++) {
+              const val = sdSel.options[j].value;
+              // If value is a date in YYYYMMDD format
+              if (/^\d{8}$/.test(val)) {
+                // Parse date
+                const y = +val.slice(0, 4), m = +val.slice(4, 6) - 1, d = +val.slice(6, 8);
+                const dt = new Date(y, m, d);
+                const day = dt.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+                if (day >= 2 && day <= 4) { // Tuesday-Thursday
+                  sdSel.options[j].selected = true;
+                  selected = true;
+                  break;
+                }
+              }
+            }
+            // If no weekday found, select the first available date
+            if (!selected) {
+              sdSel.options[0].selected = true;
+            }
+        }
+      }
+
+      // 4. Trigger filtering
+      if (typeof filterTrips === "function") filterTrips();
+
+      showTransitScorePopup("No routes/service patterns selected. Showing results for all routes on the first weekday.");
     }
 
     // Remove previous marker

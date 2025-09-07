@@ -188,18 +188,47 @@
 }
 
 #progressBarContainer {
-  width: 100%;
-  background: #e3e8ee;
-  border-radius: 6px;
-  height: 18px;
-  margin-top: 4px;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 5000;
+  width: 340px;
+  height: 28px;
+  background: #f8fafc;
+  border-radius: 8px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.18);
+  display: flex;
+  align-items: center;
+  padding: 4px;
 }
+
 #progressBar {
   height: 100%;
   width: 0%;
   background: #0078d7;
   border-radius: 6px;
   transition: width 0.3s;
+}
+
+#progressBarText {
+  position: absolute;
+  width: 100%;
+  text-align: center;
+  left: 0;
+  top: 0;
+  line-height: 28px;
+  font-weight: bold;
+  color: #000000;
+  font-size: 1.1em;
+  pointer-events: none;
+}
+#uiBlockOverlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(255,255,255,0.5);
+  z-index: 4000;
+  cursor: wait;
 }
 
 .main-menu-filters {
@@ -543,6 +572,29 @@
   display: inline-block;
   margin: 0;
   vertical-align: middle;
+}
+
+#transitScorePopup {
+  position: fixed;
+  left: 50%;
+  bottom: 40px;
+  transform: translateX(-50%);
+  min-width: 220px;
+  max-width: 90vw;
+  background: #185a9d;
+  color: #fff;
+  padding: 14px 28px;
+  border-radius: 8px;
+  font-size: 1.15em;
+  text-align: center;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+  opacity: 0;
+  transition: opacity 0.4s;
+  z-index: 9999;
+  pointer-events: none;
+}
+#transitScorePopup.show {
+  opacity: 1;
 }
 
 @media (max-width: 900px) {

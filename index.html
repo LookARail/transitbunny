@@ -13,6 +13,9 @@
   <div id="map"></div>
 
   <img id="mainLogo" src="TransitBunnyLogo.png" alt="Logo" />
+  <!-- Notification Popup -->
+  <div id="transitScorePopup" style="display:none;"></div>
+  
   <div id="controls" >
   <div id="transitbunnylogo" class="main-menu-title">Transit Bunny</div>
   <span id="dataSourceLabel" style="font-size:1.1em; color:#001df5; margin-bottom:-5px; display:block;">
@@ -24,9 +27,6 @@
   <div class="main-menu-upload">
     <button id="uploadGtfsBtn"><span style="font-size:1.2em;">📁</span> Load My Own GTFS ZIP</button>
     <input type="file" id="gtfsFileInput" accept=".zip" style="display:none" />
-    <div id="progressBarContainer" style="display:none;">
-      <div id="progressBar"></div>
-    </div>
   </div>
 
   <span id="dataSourceLabel" style="font-size:1.1em; color:#001df5; margin-bottom:-5px; display:block;">
@@ -80,6 +80,12 @@
     <button id="updateMapBtn" style="margin-top:12px;">Update Map</button>
   </div>
 </div>
+
+<div id="progressBarContainer" style="display:none;">
+  <div id="progressBar"></div>
+  <span id="progressBarText" style="position:absolute; width:100%; text-align:center; left:0; top: 3.5px;line-height:28px; font-weight:bold; font-size:1.1em;">0%</span>
+</div>
+<div id="uiBlockOverlay" style="display:none;"></div>
 
 <!-- Animation Controls Canvas -->
 <div id="animationCanvas" class="floating-canvas" style="display:none;">
