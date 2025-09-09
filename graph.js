@@ -35,14 +35,15 @@ function initTripPlot() {
       animation: false,
       scales: {
         x: {
+          type: 'linear', 
           title: { display: true, text: 'Time (HH:MM)' },
           ticks: {
             autoSkip: false,
-            callback: function(value, index) {
-              const label = this.chart.data.labels[index];
-              // Show label if it's a whole hour
-              if (/^\d{2}:00:00$/.test(label)) return label.substring(0, 5); // HH:MM
-              return '';
+            stepSize: 3600, // one hour in seconds
+            callback: function(value) {
+              // Format seconds as HH:MM
+              const h = Math.floor(value / 3600).toString().padStart(2, '0');
+              return `${h}:00`;
             }
           }
         },
@@ -59,7 +60,18 @@ function initTripPlot() {
       },
       plugins: {
         legend: { display: true, position: 'bottom' },
-        title: { text: 'Number of Vehicles', display: true, font: { size: 14 } }
+        title: { text: 'Number of Vehicles', display: true, font: { size: 14 } },
+        tooltip: {
+        callbacks: {
+          title: function(context) {
+            // context[0].parsed.x is the x value in seconds
+            const value = context[0].parsed.x;
+            const h = Math.floor(value / 3600).toString().padStart(2, '0');
+            const m = Math.floor((value % 3600) / 60).toString().padStart(2, '0');
+            return `${h}:${m}`;
+          }
+        }
+      }
       }
     }
   });
@@ -69,47 +81,35 @@ function initTripPlot() {
 }
 
 function updateTripPlot(currentTime) {
-
   let count1 = 0, count2 = 0;
   for (const m of allVehicleMarkers) {
     if (m.parentTrip && window.tripIds1 && window.tripIds1.has(m.parentTrip.trip_id)) count1++;
     if (m.parentTrip && window.tripIds2 && window.tripIds2.has(m.parentTrip.trip_id)) count2++;
   }
 
-  // Only record if at least 60 seconds since last record or if both counts are zero
-  const lastTime = tripPlotChart.data.labels.length > 0
-    ? timeToSeconds(tripPlotChart.data.labels[tripPlotChart.data.labels.length - 1])
-    : null;
+  // Use dataset[0].data last x as lastTime (seconds)
+  const ds0 = tripPlotChart.data.datasets[0].data;
+  const lastTime = ds0 && ds0.length > 0 ? ds0[ds0.length - 1].x : null;
+
+  // If this is the first-ever point, add a zero point at (currentTime - animation step)
+  if (lastTime === null) {
+    const zeroTime = currentTime - (TIME_STEP_SEC * speedMultiplier);
+    tripPlotChart.data.datasets[0].data.push({ x: zeroTime, y: 0 });
+    tripPlotChart.data.datasets[1].data.push({ x: zeroTime, y: 0 });
+  }
+
   if (lastTime === null || currentTime - lastTime >= 60 || (count1 === 0 && count2 === 0)) {
-    const timeLabel = formatTime(currentTime);
-    tripPlotChart.data.labels.push(timeLabel);
-    tripPlotChart.data.datasets[0].data.push(count1);
-    tripPlotChart.data.datasets[1].data.push(count2);
-
-    // Insert hour tick if needed
-    if (tripPlotChart.data.labels.length > 1) {
-      const currentHour = Math.floor(currentTime / 3600);
-      const hourLabel = formatTime(currentHour * 3600);
-      if (
-        hourTicks.length === 0 ||
-        currentHour > hourTicks[hourTicks.length - 1]
-      ) {
-        hourTicks.push(currentHour);
-        // Only insert hour tick if last label is not already the hour label. And insert the whole hour tick before the last label
-        if (tripPlotChart.data.labels[tripPlotChart.data.labels.length - 1] !== hourLabel) {
-          const insertIndex = tripPlotChart.data.labels.length - 1;
-          tripPlotChart.data.labels.splice(insertIndex, 0, hourLabel);
-        }
-      }
+    // push numeric points (seconds)
+    tripPlotChart.data.datasets[0].data.push({ x: currentTime, y: count1 });
+    // always push for dataset1 as well so x positions line up
+    if (tripPlotChart.data.datasets[1]) {
+      tripPlotChart.data.datasets[1].data.push({ x: currentTime, y: count2 });
     }
-
-      //legend
+    
+    // legend handling
     const sdSel = document.getElementById('serviceDateSelect');
     const selectedLabels = Array.from(sdSel.selectedOptions).map(o => o.text);
-    
-    // Always set the first label (if any)
     tripPlotChart.data.datasets[0].label = selectedLabels[0] || "Service Date 1";
-    // Set the second label or hide if not present
     if (selectedLabels.length > 1) {
       tripPlotChart.data.datasets[1].label = selectedLabels[1];
       tripPlotChart.data.datasets[1].hidden = false;
@@ -117,7 +117,6 @@ function updateTripPlot(currentTime) {
       tripPlotChart.data.datasets[1].label = "";
       tripPlotChart.data.datasets[1].hidden = true;
     }
-    // Hide Service Date 2 if all values are null or zero    
     const hasData2 = selectedLabels.length > 1;
     tripPlotChart.data.datasets[1].hidden = !hasData2;
     tripPlotChart.options.plugins.legend.display = hasData2;
@@ -125,6 +124,7 @@ function updateTripPlot(currentTime) {
     tripPlotChart.update();
   }
 }
+
 
 
 
