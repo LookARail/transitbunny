@@ -11,10 +11,26 @@ function decodeBytes(arr) {
   return decoder.decode(arr);
 }
 
-// Very small safe CSV split (naive, keeps behaviour consistent with your original code).
-// This intentionally mirrors your split(',') approach for drop-in compatibility.
 function splitRow(line) {
-  return line.split(',').map(c => c === undefined ? '' : c.trim());
+  const result = [];
+  let field = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+
+    if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === ',' && !inQuotes) {
+      result.push(field.trim());
+      field = '';
+    } else {
+      field += char;
+    }
+  }
+
+  result.push(field.trim()); // push last field
+  return result;
 }
 
 function timeToSeconds(t) {
@@ -359,3 +375,4 @@ onmessage = async function (e) {
     postMessage({ type: 'error', message: err.message || String(err) });
   }
 };
+
