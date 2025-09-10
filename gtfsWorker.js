@@ -11,6 +11,7 @@ function decodeBytes(arr) {
   return decoder.decode(arr);
 }
 
+
 function splitRow(line) {
   const result = [];
   let field = '';
@@ -32,6 +33,7 @@ function splitRow(line) {
   result.push(field.trim()); // push last field
   return result;
 }
+
 
 function timeToSeconds(t) {
   if (!t) return null;
@@ -102,7 +104,7 @@ onmessage = async function (e) {
       const nameIndex = headers.indexOf('stop_name');
       const latIndex = headers.indexOf('stop_lat');
       const lonIndex = headers.indexOf('stop_lon');
-
+            
       const stops = [];
       const stopsById = {};
       for (let i = 1; i < lines.length; i++) {
@@ -375,4 +377,3 @@ onmessage = async function (e) {
     postMessage({ type: 'error', message: err.message || String(err) });
   }
 };
-
