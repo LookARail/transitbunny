@@ -291,7 +291,6 @@ function setupCompareServiceDatesFeature() {
           const end = timeToSeconds(tripStops[tripStops.length - 1].arrival_time || tripStops[tripStops.length - 1].departure_time);
           return { trip_id: trip.trip_id, travelTimeMin: ((end - start) / 60).toFixed(1) };
         });
-        console.log(`Travel times for ${routeName} (${route_id}) on Date 1:`, travelTimes1);
       }
       if (t2.length) {
         const travelTimes2 = t2.map(trip => {
@@ -301,7 +300,6 @@ function setupCompareServiceDatesFeature() {
           const end = timeToSeconds(tripStops[tripStops.length - 1].arrival_time || tripStops[tripStops.length - 1].departure_time);
           return { trip_id: trip.trip_id, travelTimeMin: ((end - start) / 60).toFixed(1) };
         });
-        console.log(`Travel times for ${routeName} (${route_id}) on Date 2:`, travelTimes2);
       }
       
       rows.push([
@@ -355,7 +353,6 @@ function shapeDistance(shapePts) {
 
   if (nonZeroTraveled.length > 0) {
       //If available, return the maximum value
-      //console.log(`For shapeID ${shapePts[0].shape_id} Using shape_dist_traveled values:`, Math.max(...nonZeroTraveled));
       return Math.max(...nonZeroTraveled);
   } else {
       //Otherwise, calculate manually
