@@ -129,49 +129,112 @@ onmessage = async function (e) {
     }
 
     // --- stop_times (build stopTimesByTripId + tripStartTimeMap & tripStopsMap) ---
+    // --- BEFORE any parsing (near top of onmessage): send file sizes for progress weighting ---
+    (function sendFileSizesIfPossible(zipFile) {
+      try {
+        const files = {};
+        for (const k in zipFile) {
+          const v = zipFile[k];
+          // v may be Uint8Array or ArrayBuffer; compute byteLength
+          files[k] = (v && (v.byteLength || (v.length ? v.length : 0))) || 0;
+        }
+        postMessage({ type: 'files', files });
+      } catch (e) {
+        // non-fatal
+      }
+    })(zipFile);
+
+
+    // --- stop_times (streamed, no giant array) ---
     if (zipFile['stop_times.txt']) {
-      postMessage({ type: 'status', message: 'Worker: decoding stop_times.txt' });
+      postMessage({ type: 'status', message: 'Worker: streaming stop_times.txt' });
+
+      // decode to string once ( unavoidable ), but we'll NOT let papa create a big array
       const stText = decodeBytes(zipFile['stop_times.txt']);
-      const stop_times = parseCSVToObjects(stText, 'stop_times.txt');
+
+      // Try to estimate total rows for progress. Count newline characters (cheap)
+      const totalLines = (stText.match(/\r?\n/g) || []).length;
+      let processed = 0;
+      let lastProgressPost = 0;
+
+      // compact indexes we want to build
       const stopTimesByTripId = {};
       const tripStartTimeMap = {};
-      const tripStopsMap = {};
-      for (const stObj of stop_times) {
-        const tripId = stObj.trip_id ? stObj.trip_id.trim() : '';
-        const stopId = stObj.stop_id ? stObj.stop_id.trim() : '';
-        const seq = parseInt(stObj.stop_sequence, 10) || 0;
-        const arrival = stObj.arrival_time ? stObj.arrival_time.trim() : '';
-        const departure = stObj.departure_time ? stObj.departure_time.trim() : (arrival || '');
-        const departureSec = departure ? timeToSeconds(departure) : null;
-        stObj.arrival_time = arrival;
-        stObj.departure_time = departure;
-        stObj.stop_sequence = seq;
-        stObj.departure_sec = departureSec;
+      const tripStopsMap = {}; // use Set-like object, convert to arrays later if needed
 
-        if (!stopTimesByTripId[tripId]) stopTimesByTripId[tripId] = [];
-        stopTimesByTripId[tripId].push(stObj);
+      // Use Papa.parse with step callback to process rows incrementally
+      let headerKeys = null;
+      Papa.parse(stText, {
+        header: true,
+        skipEmptyLines: true,
+        step: function(results, parser) {
+          const row = results.data;
+          processed++;
 
-        if (!tripStopsMap[tripId]) tripStopsMap[tripId] = new Set();
-        if (stopId) tripStopsMap[tripId].add(stopId);
+          // normalize fields (avoid creating many extra properties)
+          const tripId = row.trip_id ? row.trip_id.trim() : '';
+          const stopId = row.stop_id ? row.stop_id.trim() : '';
+          const seq = row.stop_sequence ? parseInt(row.stop_sequence, 10) : 0;
+          const arrival = row.arrival_time ? row.arrival_time.trim() : '';
+          const departure = row.departure_time ? row.departure_time.trim() : (arrival || '');
+          const departureSec = departure ? timeToSeconds(departure) : null;
 
-        if (departureSec !== null) {
-          const t = tripStartTimeMap[tripId];
-          if (t === undefined || departureSec < t) tripStartTimeMap[tripId] = departureSec;
+          // only keep the minimal per-stop object you need (avoid copying original row)
+          const stObj = {
+            trip_id: tripId,
+            stop_id: stopId,
+            stop_sequence: seq,
+            arrival_time: arrival,
+            departure_time: departure,
+            departure_sec: departureSec
+          };
+
+          if (!stopTimesByTripId[tripId]) stopTimesByTripId[tripId] = [];
+          stopTimesByTripId[tripId].push(stObj);
+
+          if (!tripStopsMap[tripId]) tripStopsMap[tripId] = {};
+          if (stopId) tripStopsMap[tripId][stopId] = 1;
+
+          if (departureSec !== null) {
+            const t = tripStartTimeMap[tripId];
+            if (t === undefined || departureSec < t) tripStartTimeMap[tripId] = departureSec;
+          }
+
+          // periodically post progress (every ~1% or every 5k rows)
+          if (totalLines && (processed % Math.max(1, Math.floor(totalLines / 200)) === 0 || processed % 5000 === 0)) {
+            const pct = totalLines ? Math.min(1, processed / totalLines) : 0;
+            // avoid flooding; only post if changed enough
+            if (pct - lastProgressPost >= 0.01 || processed % 5000 === 0) {
+              lastProgressPost = pct;
+              postProgress('stop_times.txt', pct);
+            }
+          }
+        },
+        complete: function() {
+          // convert tripStopsMap small objects to arrays for structured clone
+          const tripStopsMapObj = {};
+          Object.keys(tripStopsMap).forEach(k => {
+            tripStopsMapObj[k] = Object.keys(tripStopsMap[k]);
+          });
+
+          // We DO NOT return the full `stop_times` array to reduce memory — only the compact indexes
+          results.stop_times = null;
+          results.stopTimesByTripId = stopTimesByTripId;
+          results.tripStartTimeMap = tripStartTimeMap;
+          results.tripStopsMap = tripStopsMapObj;
+
+          // signal file complete
+          postProgress('stop_times.txt', 1);
+          postMessage({ type: 'status', message: 'Worker: finished parsing stop_times.txt' });
+
+          // Note: DO NOT call postMessage done here — we'll let the rest of worker code continue and call 'done' at the end
+        },
+        error: function(err) {
+          postMessage({ type: 'error', message: 'Papa parse error for stop_times: ' + (err && err.message) });
         }
-      }
-      // sort stop_times per trip
-      Object.keys(stopTimesByTripId).forEach(tid => {
-        stopTimesByTripId[tid].sort((a,b) => a.stop_sequence - b.stop_sequence);
       });
-      results.stop_times = stop_times;
-      results.stopTimesByTripId = stopTimesByTripId;
-      results.tripStartTimeMap = tripStartTimeMap;
-      // convert sets to arrays for structured clone
-      const tripStopsMapObj = {};
-      Object.keys(tripStopsMap).forEach(k => { tripStopsMapObj[k] = Array.from(tripStopsMap[k]); });
-      results.tripStopsMap = tripStopsMapObj;
     }
-
+    
     // --- calendar & calendar_dates (optional) ---
     if (zipFile['calendar.txt']) {
       postMessage({ type: 'status', message: 'Worker: decoding calendar.txt' });
