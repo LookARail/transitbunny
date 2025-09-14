@@ -51,6 +51,8 @@ let shapesById = {};                 // shape_id -> [ {lat,lon,sequence,shape_di
 let shapeCumulativeDist = {};        // shape_id -> [cumulative distances]
 let stopTimesByTripId = {};          // trip_id -> [ {trip_id,stop_id,arrival_time,departure_time,stop_sequence,departure_sec}, ... ]
 
+let lastDraggedDepth = 0; // for handling drag events on markers
+
 const ROUTE_TYPE_NAMES = {
   0: "Tram, Streetcar, Light rail",
   1: "Subway, Metro",
@@ -267,19 +269,19 @@ async function LoadGTFSZipFile(zipFileInput) {
     shapeIdToDistance = results.shapeIdToDistance || {};
     routes = results.routes || [];
     trips = results.trips || [];
-    stopTimes = results.stop_times || [];
     stopTimesByTripId = results.stopTimesByTripId || {};
+    console.log('stopTimesByTripId keys:', Object.keys(stopTimesByTripId).length);
+    // Rebuild flat stopTimes array from stopTimesByTripId
+    stopTimes = [];    
+    Object.values(stopTimesByTripId).forEach(arr => {
+      if (Array.isArray(arr)) stopTimes.push(...arr);
+    });
+    // ...
+
     tripStartTimeMap = results.tripStartTimeMap || {};
 
-    tripStopsMap = {};
     if (results.tripStopsMap) {
-      Object.keys(results.tripStopsMap).forEach(k => {
-        try {
-          tripStopsMap[k] = new Set(results.tripStopsMap[k]);
-        } catch (e) {
-          tripStopsMap[k] = new Set(Array.isArray(results.tripStopsMap[k]) ? results.tripStopsMap[k] : []);
-        }
-      });
+      tripStopsMap = results.tripStopsMap; // Now an array of stop_ids in correct order
     } else {
       tripStopsMap = {};
     }
@@ -560,8 +562,8 @@ function parseStopTimesIntoIndexes(text) {
     if (!stopTimesByTripId[tripId]) stopTimesByTripId[tripId] = [];
     stopTimesByTripId[tripId].push(stObj);
 
-    if (!tripStopsMap[tripId]) tripStopsMap[tripId] = new Set();
-    if (stopId) tripStopsMap[tripId].add(stopId);
+    if (!tripStopsMap[tripId]) tripStopsMap[tripId] = [];
+    if (stopId) tripStopsMap[tripId].push({ stop_id: stopId, stop_sequence: seq });
 
     if (departureSec !== null) {
       const t = tripStartTimeMap[tripId];
@@ -571,6 +573,11 @@ function parseStopTimesIntoIndexes(text) {
   // sort each trip's stop_times by stop_sequence
   Object.keys(stopTimesByTripId).forEach(tid => {
     stopTimesByTripId[tid].sort((a,b) => a.stop_sequence - b.stop_sequence);
+  });
+
+  Object.keys(tripStopsMap).forEach(tripId => {
+    tripStopsMap[tripId].sort((a, b) => a.stop_sequence - b.stop_sequence);
+    tripStopsMap[tripId] = tripStopsMap[tripId].map(obj => obj.stop_id);
   });
 
   return stopTimes;
@@ -1205,7 +1212,7 @@ function UpdateVehiclePositions(){
             // Calculate distance and layover
             const endPos = path[path.length - 1];
             const stopIds = tripStopsMap[nextTrip.trip_id];
-            const startStopId = stopIds ? Array.from(stopIds)[0] : null;
+            const startStopId = stopIds ? stopIds[0] : null;
             const startStop = stops.find(s => s.id === startStopId);
                     
             const dist = calculateDistance(endPos.lat, endPos.lon, startStop.lat, startStop.lon);
@@ -1216,6 +1223,7 @@ function UpdateVehiclePositions(){
               //if the two trips are > 2hrs apart, treat them as two unrelated trips
               //another case is if the trips are >400m apart and within 2hrs connection, and the speed is > 5m/s (18km/h). Treat this case as if the block_id is miscoded, and the trip is not the same physical vehicl
               msg += " ALERT: This is not considered a connection although the trips share the same block_id";
+              msg += `DEBUG: endPos=${endPos.lat}${endPos.lon}, startStop=${startStop.lat}${startStop.lon}, startStopId=${startStopId}[${[...stopIds].join(', ')}]`;
               console.log(msg);
             }else{              
               // Inherit marker for next trip
@@ -1410,6 +1418,7 @@ window.addEventListener('DOMContentLoaded', () => {
       if (isActive) {
         this.classList.remove('active');
         if (canvas) canvas.style.display = 'none';
+        this.blur(); 
       } else {
         this.classList.add('active');
         if (canvas) canvas.style.display = 'flex';
@@ -1433,6 +1442,22 @@ window.addEventListener('DOMContentLoaded', () => {
       });
     });
   });
+
+  document.getElementById('selectAllRouteType').onclick = function() {
+    const sel = document.getElementById('routeTypeSelect');
+    for (let i = 0; i < sel.options.length; i++) {
+      sel.options[i].selected = true;
+    }
+    sel.dispatchEvent(new Event('change'));
+  };
+
+  document.getElementById('selectAllRouteName').onclick = function() {
+    const sel = document.getElementById('routeShortNameSelect');
+    for (let i = 0; i < sel.options.length; i++) {
+      sel.options[i].selected = true;
+    }
+    sel.dispatchEvent(new Event('change'));
+  };
 
   // Handle all close-canvas buttons
   document.querySelectorAll('.close-canvas-btn').forEach(btn => {
@@ -1465,6 +1490,8 @@ window.addEventListener('DOMContentLoaded', () => {
       const rect = canvas.getBoundingClientRect();
       offsetX = e.clientX - rect.left;
       offsetY = e.clientY - rect.top;
+      
+      lastDraggedDepth = canvas.style.zIndex;
       canvas.style.zIndex = 3000;
       document.body.style.userSelect = 'none';
     });
@@ -1482,7 +1509,7 @@ window.addEventListener('DOMContentLoaded', () => {
       if (isDragging) {
         isDragging = false;
         document.body.style.userSelect = '';
-        setTimeout(() => { canvas.style.zIndex = 1500; }, 200);
+        setTimeout(() => { canvas.style.zIndex = lastDraggedDepth; }, 200);
       }
     });
   });
