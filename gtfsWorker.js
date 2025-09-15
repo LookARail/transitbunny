@@ -1,14 +1,10 @@
 importScripts('libs/papaparse.min.js');
-// gtfsWorker.js
-// Worker that receives an object mapping filenames -> Uint8Array (uncompressed file bytes).
-// It parses GTFS files and posts progress/status messages back to the main thread.
+// gtfsWorker.js - Blob-based parsing (only #1 fix: parse from Blob instead of decoding whole string)
 
-// Helper: decode ArrayBuffer/Uint8Array to string
+// Helper (kept in case other code paths use it)
 function decodeBytes(arr) {
   const decoder = new TextDecoder('utf-8');
-  // if it's already ArrayBuffer
   if (arr instanceof ArrayBuffer) return decoder.decode(new Uint8Array(arr));
-  // if it's Uint8Array
   return decoder.decode(arr);
 }
 function timeToSeconds(t) {
@@ -17,18 +13,30 @@ function timeToSeconds(t) {
   if (parts.length !== 3) return null;
   return parts[0] * 3600 + parts[1] * 60 + parts[2];
 }
-
-// Post helper
 function postProgress(file, pct) {
   postMessage({ type: 'progress', file, progress: pct });
 }
 
-// Utility to parse generic CSV into array of rows (objects keyed by header)
-function parseCSVToObjects(text, fileLabel) {
-  const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
-  const rows = parsed.data;
-  postProgress(fileLabel, 1);
-  return rows;
+// --- NEW: helper to parse a Blob/Uint8Array into objects (header:true) without creating a huge string
+function parseBlobToObjects(bytesOrBuffer, fileLabel) {
+  return new Promise((resolve, reject) => {
+    try {
+      const blob = new Blob([bytesOrBuffer]);
+      Papa.parse(blob, {
+        header: true,
+        skipEmptyLines: true,
+        complete: function(results) {
+          postProgress(fileLabel, 1);
+          resolve(results.data);
+        },
+        error: function(err) {
+          reject(err);
+        }
+      });
+    } catch (err) {
+      reject(err);
+    }
+  });
 }
 
 onmessage = async function (e) {
@@ -49,16 +57,13 @@ onmessage = async function (e) {
       stopsById: null,
       shapesById: null,
       shapeIdToDistance: null,
-      stopTimesByTripId: null,
-      tripStartTimeMap: null,
       tripStopsMap: null
     };
 
     // --- stops ---
     if (zipFile['stops.txt']) {
-      postMessage({ type: 'status', message: 'Worker: decoding stops.txt' });
-      const stopsText = decodeBytes(zipFile['stops.txt']);
-      const stops = parseCSVToObjects(stopsText, 'stops.txt');
+      postMessage({ type: 'status', message: 'Worker: parsing stops.txt (Blob)' });
+      const stops = await parseBlobToObjects(zipFile['stops.txt'], 'stops.txt');
       const stopsById = {};
       for (const obj of stops) {
         const id = obj.stop_id ? obj.stop_id.trim() : '';
@@ -74,25 +79,22 @@ onmessage = async function (e) {
 
     // --- routes ---
     if (zipFile['routes.txt']) {
-      postMessage({ type: 'status', message: 'Worker: decoding routes.txt' });
-      const routesText = decodeBytes(zipFile['routes.txt']);
-      const routes = parseCSVToObjects(routesText, 'routes.txt');
+      postMessage({ type: 'status', message: 'Worker: parsing routes.txt (Blob)' });
+      const routes = await parseBlobToObjects(zipFile['routes.txt'], 'routes.txt');
       results.routes = routes;
     }
 
     // --- trips ---
     if (zipFile['trips.txt']) {
-      postMessage({ type: 'status', message: 'Worker: decoding trips.txt' });
-      const tripsText = decodeBytes(zipFile['trips.txt']);
-      const trips = parseCSVToObjects(tripsText, 'trips.txt');
+      postMessage({ type: 'status', message: 'Worker: parsing trips.txt (Blob)' });
+      const trips = await parseBlobToObjects(zipFile['trips.txt'], 'trips.txt');
       results.trips = trips;
     }
 
     // --- shapes (group and compute distance) ---
     if (zipFile['shapes.txt']) {
-      postMessage({ type: 'status', message: 'Worker: decoding shapes.txt' });
-      const shapesText = decodeBytes(zipFile['shapes.txt']);
-      const shapes = parseCSVToObjects(shapesText, 'shapes.txt');
+      postMessage({ type: 'status', message: 'Worker: parsing shapes.txt (Blob)' });
+      const shapes = await parseBlobToObjects(zipFile['shapes.txt'], 'shapes.txt');
       const shapesById = {};
       for (const obj of shapes) {
         const sid = obj.shape_id ? obj.shape_id.trim() : '';
@@ -108,11 +110,9 @@ onmessage = async function (e) {
       Object.keys(shapesById).forEach(id => {
         const arr = shapesById[id];
         arr.sort((a, b) => a.sequence - b.sequence);
-        // compute cumulative distances
         let cum = 0;
         for (let k = 1; k < arr.length; k++) {
           const a = arr[k-1], b = arr[k];
-          // haversine (approx)
           const R = 6371000;
           const toRad = deg => deg * Math.PI / 180;
           const dLat = toRad(b.lat - a.lat);
@@ -128,14 +128,12 @@ onmessage = async function (e) {
       results.shapeIdToDistance = shapeIdToDistance;
     }
 
-    // --- stop_times (build stopTimesByTripId + tripStartTimeMap & tripStopsMap) ---
     // --- BEFORE any parsing (near top of onmessage): send file sizes for progress weighting ---
     (function sendFileSizesIfPossible(zipFile) {
       try {
         const files = {};
         for (const k in zipFile) {
           const v = zipFile[k];
-          // v may be Uint8Array or ArrayBuffer; compute byteLength
           files[k] = (v && (v.byteLength || (v.length ? v.length : 0))) || 0;
         }
         postMessage({ type: 'files', files });
@@ -144,104 +142,101 @@ onmessage = async function (e) {
       }
     })(zipFile);
 
-
-    // --- stop_times (streamed, no giant array) ---
+    // --- stop_times (streamed from Blob; no giant decoded string for parsing) ---
+    // --- stop_times: awaitable streaming parse (keeps results.stop_times_text) ---
     if (zipFile['stop_times.txt']) {
-      postMessage({ type: 'status', message: 'Worker: streaming stop_times.txt' });
+      postMessage({ type: 'status', message: 'Worker: indexing stop_times.txt (Blob, streaming)' });
 
-      // decode to string once ( unavoidable ), but we'll NOT let papa create a big array
-      const stText = decodeBytes(zipFile['stop_times.txt']);
+      const stBlob = new Blob([zipFile['stop_times.txt']]);
 
-      // Try to estimate total rows for progress. Count newline characters (cheap)
-      const totalLines = (stText.match(/\r?\n/g) || []).length;
-      let processed = 0;
-      let lastProgressPost = 0;
+      // wrap in a promise so we await completion
+      await new Promise((resolve, reject) => {
+        let lineNum = 0;
+        let lastTripId = null;
+        const tripLineIndex = {};
+        const tripStartTimeMap = {};
+        const tripStopsMap = {};
 
-      // compact indexes we want to build
-      const stopTimesByTripId = {};
-      const tripStartTimeMap = {};
-      const tripStopsMap = {}; // use Set-like object, convert to arrays later if needed
+        // defensive quick-check
+        postMessage({ type: 'status', message: `Worker: stop_times blob size ${stBlob.size}` });
 
-      // Use Papa.parse with step callback to process rows incrementally
-      let headerKeys = null;
-      Papa.parse(stText, {
-        header: true,
-        skipEmptyLines: true,
-        step: function(results, parser) {
-          const row = results.data;
-          processed++;
+        Papa.parse(stBlob, {
+          header: true,
+          skipEmptyLines: true,
+          step: function(results) {
+            lineNum++;
+            const row = results.data;
+            const tripId = row.trip_id ? row.trip_id.trim() : '';
+            const stopId = row.stop_id ? row.stop_id.trim() : '';
+            const stopSeq = row.stop_sequence ? parseInt(row.stop_sequence, 10) : 0;
+            const depTimeStr = row.departure_time ? row.departure_time.trim() : '';
+            const depTimeSec = depTimeStr ? timeToSeconds(depTimeStr) : null;
 
-          // normalize fields (avoid creating many extra properties)
-          const tripId = row.trip_id ? row.trip_id.trim() : '';
-          const stopId = row.stop_id ? row.stop_id.trim() : '';
-          const seq = row.stop_sequence ? parseInt(row.stop_sequence, 10) : 0;
-          const arrival = row.arrival_time ? row.arrival_time.trim() : '';
-          const departure = row.departure_time ? row.departure_time.trim() : (arrival || '');
-          const departureSec = departure ? timeToSeconds(departure) : null;
-
-          // only keep the minimal per-stop object you need (avoid copying original row)
-          const stObj = {
-            trip_id: tripId,
-            stop_id: stopId,
-            stop_sequence: seq,
-            arrival_time: arrival,
-            departure_time: departure,
-            departure_sec: departureSec
-          };
-
-          if (!stopTimesByTripId[tripId]) stopTimesByTripId[tripId] = [];
-          stopTimesByTripId[tripId].push(stObj);
-
-          if (!tripStopsMap[tripId]) tripStopsMap[tripId] = []; 
-          if (stopId) tripStopsMap[tripId].push({ stop_id: stopId, stop_sequence: seq });
-
-          if (departureSec !== null) {
-            const t = tripStartTimeMap[tripId];
-            if (t === undefined || departureSec < t) tripStartTimeMap[tripId] = departureSec;
-          }
-
-          // periodically post progress (every ~1% or every 5k rows)
-          if (totalLines && (processed % Math.max(1, Math.floor(totalLines / 200)) === 0 || processed % 5000 === 0)) {
-            const pct = totalLines ? Math.min(1, processed / totalLines) : 0;
-            // avoid flooding; only post if changed enough
-            if (pct - lastProgressPost >= 0.01 || processed % 5000 === 0) {
-              lastProgressPost = pct;
-              postProgress('stop_times.txt', pct);
+            // Build tripLineIndex
+            if (tripId !== lastTripId) {
+              if (lastTripId !== null) {
+                tripLineIndex[lastTripId].end = lineNum - 1;
+              }
+              tripLineIndex[tripId] = { start: lineNum, end: lineNum };
+              lastTripId = tripId;
+            } else {
+              tripLineIndex[tripId].end = lineNum;
             }
+
+            // Build tripStopsMap
+            if (!tripStopsMap[tripId]) tripStopsMap[tripId] = [];
+            if (stopId) tripStopsMap[tripId].push({ stop_id: stopId, stop_sequence: stopSeq });
+
+            // Build tripStartTimeMap
+            if (depTimeSec != null && (!tripStartTimeMap[tripId] || stopSeq === 1 || depTimeSec < tripStartTimeMap[tripId])) {
+              tripStartTimeMap[tripId] = depTimeSec;
+            }
+
+            // optional: emit progress occasionally
+            if (lineNum % 100000 === 0) postMessage({ type: 'status', message: `Worker: processed ${lineNum} stop_time lines` });
+          },
+          complete: function() {
+            if (lastTripId !== null) {
+              tripLineIndex[lastTripId].end = lineNum;
+            }
+            const tripStopsMapObj = {};
+            Object.keys(tripStopsMap).forEach(tripId => {
+              tripStopsMap[tripId].sort((a, b) => a.stop_sequence - b.stop_sequence);
+              tripStopsMapObj[tripId] = tripStopsMap[tripId].map(obj => obj.stop_id);
+            });
+
+            // Re-create full decoded text for testing (note: this reintroduces large string)
+            stBlob.text().then(text => {
+              results.stop_times_text = text; // kept for incremental testing
+              results.stop_times_trip_index = tripLineIndex;
+              results.tripStartTimeMap = tripStartTimeMap;
+              results.tripStopsMap = tripStopsMapObj;
+
+              postMessage({ type: 'status', message: 'Worker: finished parsing stop_times.txt' });
+              resolve();
+            }).catch(err => {
+              // fallback: no text
+              results.stop_times_text = null;
+              results.stop_times_trip_index = tripLineIndex;
+              results.tripStartTimeMap = tripStartTimeMap;
+              results.tripStopsMap = tripStopsMapObj;
+
+              postMessage({ type: 'status', message: 'Worker: finished parsing stop_times.txt (text unavailable)' });
+              resolve();
+            });
+          },
+          error: function(err) {
+            postMessage({ type: 'error', message: 'Papa parse error for stop_times: ' + (err && err.message) });
+            reject(err);
           }
-        },
-        complete: function() {
-          // convert tripStopsMap small objects to arrays for structured clone
-          const tripStopsMapObj = {};
-          Object.keys(tripStopsMap).forEach(k => {
-            // Sort by stop_sequence and keep only stop_id
-            tripStopsMap[k].sort((a, b) => a.stop_sequence - b.stop_sequence);
-            tripStopsMapObj[k] = tripStopsMap[k].map(obj => obj.stop_id);
-          });
-
-          // We DO NOT return the full `stop_times` array to reduce memory — only the compact indexes
-          results.stop_times = null;
-          results.stopTimesByTripId = stopTimesByTripId;
-          results.tripStartTimeMap = tripStartTimeMap;
-          results.tripStopsMap = tripStopsMapObj;
-
-          // signal file complete
-          postProgress('stop_times.txt', 1);
-          postMessage({ type: 'status', message: 'Worker: finished parsing stop_times.txt' });
-
-          // Note: DO NOT call postMessage done here — we'll let the rest of worker code continue and call 'done' at the end
-        },
-        error: function(err) {
-          postMessage({ type: 'error', message: 'Papa parse error for stop_times: ' + (err && err.message) });
-        }
-      });
+        });
+      }); // await the promise
     }
-    
+
     // --- calendar & calendar_dates (optional) ---
     if (zipFile['calendar.txt']) {
-      postMessage({ type: 'status', message: 'Worker: decoding calendar.txt' });
-      const calText = decodeBytes(zipFile['calendar.txt']);
-      const calRows = parseCSVToObjects(calText, 'calendar.txt');
+      postMessage({ type: 'status', message: 'Worker: parsing calendar.txt (Blob)' });
+      const calRows = await parseBlobToObjects(zipFile['calendar.txt'], 'calendar.txt');
       const cal = [];
       for (const obj of calRows) {
         cal.push({
@@ -263,9 +258,8 @@ onmessage = async function (e) {
     }
 
     if (zipFile['calendar_dates.txt']) {
-      postMessage({ type: 'status', message: 'Worker: decoding calendar_dates.txt' });
-      const cdText = decodeBytes(zipFile['calendar_dates.txt']);
-      const cdRows = parseCSVToObjects(cdText, 'calendar_dates.txt');
+      postMessage({ type: 'status', message: 'Worker: parsing calendar_dates.txt (Blob)' });
+      const cdRows = await parseBlobToObjects(zipFile['calendar_dates.txt'], 'calendar_dates.txt');
       const cds = [];
       for (const obj of cdRows) {
         cds.push({
