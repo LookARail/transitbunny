@@ -5,25 +5,29 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Transit Bunny</title>  
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />  
-  <link rel="stylesheet" href="style.css" />
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" href="style.css" />  
   <link href="https://fonts.googleapis.com/css?family=Fredoka+One&display=swap" rel="stylesheet">
 </head>
 <body>
   <div id="map"></div>
-
-  <img id="mainLogo" src="TransitBunnyLogo.png" alt="Logo" />
+  
   <!-- Notification Popup -->
   <div id="transitScorePopup" style="display:none;"></div>
   
   <div id="controls" >
-  <div id="transitbunnylogo" class="main-menu-title">Transit Bunny</div>
-  <span id="dataSourceLabel" style="font-size:1.1em; color:#001df5; margin-bottom:-5px; display:block;">
-    GTFS Data Source:
-  </span>
-  <span id="dataSourceText" style="font-size:0.98em; color:#0078d7; margin-bottom:0px; display:block;">
-    Default - Vancouver GTFS Data 2025-08-08
-  </span>
+  <div class="main-menu-title-row">
+    <img id="mainLogo" src="TransitBunnyLogo.png" alt="Logo" />
+    <div id="transitbunnylogo" class="main-menu-title">Transit Bunny</div>
+  </div>
+  
+  <div class="gtfs-source-row">
+    <span id="dataSourceLabel" style="font-size:1.1em; color:#001df5; margin-bottom:-5px;">
+      GTFS Source:
+    </span>
+    <span id="dataSourceText" style="font-size:0.98em; color:#0078d7; margin-bottom:0px; margin-left:8px;">
+      Default - Vancouver 2025-08-08
+    </span>
+  </div>
   <div class="main-menu-upload">
     <button id="uploadGtfsBtn"><span style="font-size:1.2em;">📁</span> Load My Own GTFS ZIP</button>
     <input type="file" id="gtfsFileInput" accept=".zip" style="display:none" />
@@ -44,9 +48,9 @@
           </span>
         </span>
       </label>
+      <select id="routeTypeSelect" multiple size="4" class="filter-select" style="min-width: 120px;"></select>
       <button type="button" id="selectAllRouteType" class="select-all-btn">Select All</button>
     </div>
-    <select id="routeTypeSelect" multiple size="4" style="min-width: 120px;"></select>
 
     <!-- Route Name Filter -->
     <div class="filter-row">
@@ -58,13 +62,13 @@
           </span>
         </span>
       </label>
+      <select id="routeShortNameSelect" multiple size="4" class="filter-select"style="min-width: 120px;"></select>
       <button type="button" id="selectAllRouteName" class="select-all-btn">Select All</button>
     </div>
-    <select id="routeShortNameSelect" multiple size="4" style="min-width: 120px; max-width: 300px;"></select>
 
 
     <!-- Service Pattern ID Filter -->
-    <label id="serviceIdLabel">
+    <label id="serviceIdLabel" class="filter-label" style="display:none;">
       <span class="tooltip">
         Service Pattern ID:    
         <span class="tooltiptext">
@@ -74,20 +78,26 @@
       <select id="serviceIdSelect" multiple size="4" style="min-width: 120px;"></select>
     </label>
     <!-- Service-Date Filter (pre-defined, hidden by default) -->
-    <label id="serviceDateLabel" style="display:none;">
-      <span class="tooltip">
-        Service-Date:
-        <span class="tooltiptext">
-          Select a specific date or a generic weekday to filter trips by service availability.
+    
+    <div class="filter-row">            
+      <label id="serviceDateLabel" class="filter-label">
+        <span class="tooltip">
+          Service-Date:
+          <span class="tooltiptext">
+            Select a specific date or a generic weekday to filter trips by service availability.
+          </span>
         </span>
-      </span>
-      <select id="serviceDateSelect" multiple size="4" style="min-width: 120px;"></select>
-    </label>
-    <label class="inline-checkbox">
-      <input type="checkbox" id="aggregateStops" />
-      <span>Cluster Stops?</span>
-    </label>
-    <button id="updateMapBtn" style="margin-top:12px;">Update Map</button>
+      </label>
+      <select id="serviceDateSelect" multiple size="4" class="filter-select" style="min-width: 120px;"></select>
+    </div>
+
+    <div id="updateButtonRow" class="filter-row">
+      <button id="updateMapBtn" style="margin-top:10px;">Update Map</button>
+      <label class="inline-checkbox">
+        <input type="checkbox" id="aggregateStops" />
+        <span>Cluster Stops?</span>
+      </label>
+    </div>
   </div>
 </div>
 
@@ -115,9 +125,9 @@
       <span id="timeDisplay">00:00:00</span>
     </div>
     <div class="row-buttons">
-      <button id="playBtn">▶️ Play</button>
-      <button id="pauseButton"> ⏯️ Pause</button>
-      <button id="stopBtn">⏹️ Stop</button>
+      <button id="playBtn"> ▶️ <span class="btn-label">Play</span> </button>
+      <button id="pauseButton">⏯️ <span class="btn-label">Pause</span> </button>
+      <button id="stopBtn"> ⏹️ <span class="btn-label">Stop</span></button>
     </div>
   </div>
 </div>
@@ -140,11 +150,21 @@
     </div>
     <!-- trips per hour plot -->
     <div id="tripsPerHourTab" class="tab-content">
-      <div id="tripsPerHourAnnotation" style="color: #b00; font-size: 0.85em; margin-bottom: 4px; display:none"></div>
-      <canvas id="tripsPerHourPlot"></canvas>
+      <div id="tripsPerHourAnnotation" style="color: #b00; display:none"></div>
+
+      <!-- changed: wrapper with headway help icon + tooltip -->
+      <div class="trips-per-hour-chart-wrapper" style="position:relative;">
+        <span class="headway-help" role="button" aria-label="Headway help" tabindex="0">?
+          <span class="help-tooltiptext" role="tooltip">
+            The headway is estimated by the number of trips scheduled in this hour. If the route contains multiple patterns with different lengths, they are weighted to the most common trip pattern. For example, if the most common trip pattern of the route is 30 km, a 60 km trip would count as 2 trips in estimating the line headway.
+          </span>
+        </span>
+
+        <canvas id="tripsPerHourPlot"></canvas>
+      </div>
     </div>
   </div>
-  <div class="resizer"></div>
+  <div id = "graphResizer" class="resizer"></div>
 </div>
 
 <!-- Statistics Canvas with Tabs -->
@@ -166,7 +186,7 @@
     </div>
     <!-- Compare Services tabs -->
     <div id="compareServiceDatesTab" class="tab-content">
-      <div style="display:flex; gap:24px; align-items:flex-end; margin-bottom:10px;">
+      <div style="display:flex; gap:12px; align-items:flex-end; margin-bottom:10px;">
         <label>
           Service-Date 1:
           <select id="compareServiceDate1" style="min-width:120px;"></select>
@@ -191,13 +211,12 @@
     Transit Accessibility Score
     <button class="close-canvas-btn" style="margin-left:auto; background:none; border:none; color:#fff; font-size:1.3em; cursor:pointer;">✖</button>
   </div>
-  <div class="canvas-content" style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%;">
-    <div id="transitScoreValue" style="font-size:3.2em; font-weight:bold; color:#185a9d; margin: 24px 0 12px 0; transition: color 0.3s;">
-      <span style="font-size:1.2em; color:#aaa;">Click a location on the map</span>
+  <div class="canvas-content" style="display:flex; flex-direction:column; align-items:center; justify-content:top; height:100%;">
+    <div id="transitScoreValue" >
+      <span style="color:#aaa;">Click a location on the map</span>
     </div>
-    <div id="transitScoreSub" style="font-size:1.1em; color:#555; margin-bottom: 10px;">
-      <span style="color:#43cea2;">&#9679;</span> The score reflects how easy it is to access frequent transit from this spot.<br>
-      <span style="font-size:0.95em; color:#888;">(100 = best, 0 = worst)</span>
+    <div id="transitScoreSub" style="color:#555; margin-bottom: 10px;">
+      <span style="color:#43cea2;"></span> The score reflects how easy it is to access frequent transit from this spot. This feature was made for fun and there's no research-proven formula behind it! The scoring considers distance to services, number of routes, and service frequency<br>
     </div>
   </div>
 </div>
@@ -207,52 +226,111 @@
     Help &amp; Instructions
     <button class="close-canvas-btn" style="margin-left:auto; background:none; border:none; color:#fff; font-size:1.3em; cursor:pointer;">✖</button>
   </div>
+  <!-- changed: clearer hierarchical help content with section headers matching ribbon/canvases -->
   <div class="canvas-content">
-    <h3>Welcome to Transit Bunny!</h3>
-    <h4>A tool that lets you look inside the GTFS transit schedule</h4>
+    <h3><strong>Welcome to Transit Bunny!</strong></h3>
+    <p>A tool that lets you unpack GTFS transit schedule.</p>
+
+    <h4><strong>Loading Data</strong></h4>
     <ul>
-      <li> The page loads a version of the Vancouver GTFS dataset on startup, but you can load your own GTFS data! Click the <b>Load My Own GTFP ZIP:</b> button to load your transit data. The file format must be a ".zip" file containing standard static GTFS files such as "routes.txt", "trips.txt", etc.</li>
-      <li> The "clouds" with numbers represent the stops in the area.</li>
-      <li><b>Filter Trips:</b> Use the filters to select route types, route names, and service patterns. Hover over the <b>filter labels</b> for more details. Click <b>Update Map</b> to update the map to match your selection </li>
-      <li><b>Animation Controls:</b> Open the <b>Animation Controls</b> panel (▶️) to play, pause, or stop the animation. Adjust the speed as needed</li>
-      <li><b>Graphs:</b> Open the <b>Graphs</b> panel (📈) with these graph options. <b>Graphs update in sync with the animation progress</b>
+      <li>The page starts with a default Vancouver GTFS dataset from August 2025</li>
+      <li>To load your own data to explore: click <strong>Load My Own GTFS ZIP</strong>. Nearly all transit agencies publish their gtfs on the web as a zip file, and usually this zip file can be used directly here.
+        The zip file should contain the typical GTFS files including:</li>
         <ul>
-          <li><b>Number of Trips:</b> Shows the number of active vehicles over time</li>
-          <li><b>Vehicle-Kilometer:</b> Shows cumulative vehicle-kilometers by route</li>
-          <li><b>Headway:</b> Shows the estimated headways by route</li>          
+          <li>routes.txt</li>
+          <li>trips.txt</li>
+          <li>shapes.txt</li>
+          <li>stop_times.txt</li>
+          <li>etc.</li>
         </ul>
-      <li>You can multi-select two service-dates to animate! The plots will plot them separately for easier comparison !</li>
-      <li><b>Statistics:</b> Open the <b>Statistics</b> panel (📊) for route-level stats. You can download the table as CSV. The statistics are independent from the animation progress</li>
-      <li><b>Transit Score:</b> Open the <b>Transit Score</b> panel (⭐). Then click anywhere on the map and the tool will give a score for that location based on the transit services in its proximity</li>
     </ul>
+
+    <h4><strong>Trip Filters</strong></h4>
+    <ul>
+      <li>Use <strong>Route Type</strong>, <strong>Route Name</strong>, and <strong>Service/Date</strong> to limit which trips are shown and animated.</li>
+      <li>Multi-select is supported — pick up to two service-dates for side-by-side comparison.</li>
+      <li> [Optional] Click <strong>Update Map</strong> after changing filters to refresh stops and route shapes.</li>
+    </ul>
+
+    <h4><strong>Animation</strong></h4>
+    <ul>
+      <li>Open <strong>Animation</strong> (ribbon) to access playback controls: Play, Pause/Resume, Stop and Speed.</li>      
+    </ul>
+
+    <h4><strong>Graphs</strong></h4>
+    <ul>
+      <li> There are 3 plots available: number of vehicles over time, vehicle‑kilometers, and headways.</li>
+      <li> Graphs update in sync with animation progress [i.e. a complete graph requires a complete animation] </li>
+    </ul>
+
+    <h4><strong>Statistics</strong></h4>
+    <ul>
+      <li> Generate route-specific statistics, or compare service dates to see their difference</li>
+      <li> This could be helpful for analyzing the magnitude of service changes between two dates!</li>
+    </ul>
+
+    <h4><strong>Transit Score</strong></h4>
+    <ul>
+      <li> Click any map location to compute an accessibility score </li>
+      <li> This score is an approximation intended for quick exploration and not a formal metric!</li>
+    </ul>
+
     <p style="font-size:0.95em; color:#2400f3;">
-      Want more helps or features? Contact me on
+      Want more features or help? Contact me (Luke Li) on
       <a href="https://www.linkedin.com/in/luke-li-05445086/" target="_blank" style="color:#0078d7; text-decoration:underline;">LinkedIn</a>.
-      - Luke Li
     </p>
-    <img src="barcode_linkedin_lukeli.jpg" alt="Barcode" style="display:block; margin: 18px auto 0 auto; max-width:220px;">  </div>
+    <img src="barcode_linkedin_lukeli.jpg" alt="Barcode" style="display:block; margin: 18px auto 0 auto; max-width:220px;">
+  </div>
+</div>
+
+<!-- Add after other floating canvases -->
+<div id="shapeInfoCanvas" class="floating-canvas" style="display:none; min-width:220px; max-width:90vw; z-index:2500;">
+  <div class="canvas-header" style="background:#0078d7; color:#fff;">
+    Route Info
+    <button class="close-canvas-btn" style="margin-left:auto;">✖</button>
+  </div>
+  <div class="canvas-content" id="shapeInfoContent" style="padding:18px; font-size:1em;"></div>
 </div>
 
 <!-- Ribbon/Taskbar at bottom -->
 <div id="ribbonPanel">
-  <button class="ribbon-icon" data-canvas="animationCanvas" title="Animation Controls">▶️</button>
-  <button class="ribbon-icon" data-canvas="graphsCanvas" title="Graphs">📈</button>
-  <button class="ribbon-icon" data-canvas="statsCanvas" title="Statistics">📊</button>
-  <button class="ribbon-icon" data-canvas="transitScoreCanvas" title="Transit Accessibility Score">⭐</button>
-  <button class="ribbon-icon" data-canvas="helpCanvas" title="Help">❓</button>
+  <div class="ribbon-btn">
+    <button class="ribbon-icon" data-canvas="animationCanvas" title="Animation Controls">▶️</button>
+    <div class="ribbon-label">Animation</div>
+  </div>
+  <div class="ribbon-btn">
+    <button class="ribbon-icon" data-canvas="graphsCanvas" title="Graphs">📈</button>
+    <div class="ribbon-label">Graphs</div>
+  </div>
+  <div class="ribbon-btn">
+    <button class="ribbon-icon" data-canvas="statsCanvas" title="Statistics">📊</button>
+    <div class="ribbon-label">Statistics</div>
+  </div>
+  <div class="ribbon-btn">
+    <button class="ribbon-icon" data-canvas="transitScoreCanvas" title="Transit Accessibility Score">⭐</button>
+    <div class="ribbon-label">Transit Score</div>
+  </div>
+  <div class="ribbon-btn">
+    <button class="ribbon-icon" data-canvas="helpCanvas" title="Help">❓</button>
+    <div class="ribbon-label">Help</div>
+  </div>
 </div>
 
   <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <!-- Your main GTFS JS -->
+  <script src="libs/chart.js"></script>
+  <script src="libs/chartjs-plugin-zoom.js"></script>
   <script src="libs/papaparse.min.js"></script>
   <script src= "https://cdn.jsdelivr.net/npm/fflate/umd/index.js"></script>
   <script src="analysis.js"></script>
+  <script src="shapePopup.js"></script>
   <script src="main.js"></script>
   <script src="graph.js"></script>
   <script src="locationScore.js"></script>
   <link rel="stylesheet" href="libs/MarkerCluster.Default.css"/>
   <script src="libs/leaflet.markercluster.js"></script>  
+
 </body>
 </html>

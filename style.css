@@ -1,4 +1,4 @@
- html, body {
+html, body {
       height: 100%;
       margin: 0;
       font-family: 'Segoe UI', Arial, sans-serif;
@@ -22,14 +22,14 @@
       display: flex;
       flex-direction: column;
       gap: 10px;
-      min-width: 340px;
+      max-width: 400px;  
     }
 
     #controls label,
     .main-menu-filters label {
       display: flex;
       flex-direction: column;
-      align-items: flex-start;   /* <-- Ensures left alignment */
+      align-items: flex-start;   
       gap: 2px;
       font-size: 1rem;
       margin-bottom: 2px;
@@ -67,12 +67,14 @@
       transform: translateY(-2px) scale(1.03);
     }
 
-    #uploadGtfsBtn {
-      background: linear-gradient(90deg, #43cea2 0%, #185a9d 100%);
-    }
-    #uploadGtfsBtn:hover {
-      background: linear-gradient(90deg, #185a9d 0%, #43cea2 100%);
-    }
+    #transitScoreValue {
+      font-size: 2.4em;
+      font-weight: bold;
+      color: #185a9d;
+      align-items: center;
+      margin: 24px 0 12px 0;
+      transition: color 0.3s;
+    } 
 
     #timeDisplay {
       font-size: 1.15rem;
@@ -86,8 +88,8 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    margin-top: 8px;
-    margin-bottom: 4px;
+    margin-top: 2px;
+    margin-bottom: 2px;
     }
 
     .row-buttons {
@@ -112,7 +114,7 @@
     padding: 7px 10px;
     position: absolute;
     z-index: 2000;
-    bottom: 10%; /* Position above the label */
+    bottom: 10%; 
     left: 150%;
     transform: translateX(-50%);
     opacity: 0;
@@ -158,20 +160,26 @@
   gap: 8px;
 }
 
+.gtfs-source-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;  
+}
+
 #uploadGtfsBtn {
-  background: #0078d7;
+  background: linear-gradient(90deg, #24b0ec 0%, #185a9d 100%);
   color: #fff;
   border: none;
   border-radius: 8px;
-  padding: 10px 18px;
   font-size: 1rem;
   font-weight: 500;
   cursor: pointer;
   transition: background 0.2s;
 }
 #uploadGtfsBtn:hover {
-  background: #005fa3;
+  background: linear-gradient(90deg, #24b0ec 0%, #3485e2 100%);
 }
+
 
 #progressBarContainer {
   position: fixed;
@@ -179,7 +187,7 @@
   left: 50%;
   transform: translate(-50%, -50%);
   z-index: 5000;
-  width: 340px;
+  width: 400px;
   height: 28px;
   background: #f8fafc;
   border-radius: 8px;
@@ -260,7 +268,7 @@
   margin-right: 300px;
 }
 
-#routeStatsTable, #compareServiceDatesTable table {
+#routeStatsTable table, #compareServiceDatesTable table {
   width: 100%;  
   border-collapse: collapse;
   font-size: 0.78rem;
@@ -270,11 +278,20 @@
   box-shadow: 0 1px 6px rgba(0,0,0,0.07);
 }
 
+
+#routeStatsTable table {
+  min-width: 700px;
+}
+
+
+
 #routeStatsTable th, #routeStatsTable td, #compareServiceDatesTable th, #compareServiceDatesTable td {
   padding: 8px 12px;
+  text-wrap: balance;
   text-align: center;
   border-bottom: 1px solid #e3e8ee;
-  border-right: 1px solid #e3e8ee;   /* Add this line for vertical borders */
+  border-right: 1px solid #e3e8ee;   
+  min-width: 70px;
 }
 
 #routeStatsTable th, #compareServiceDatesTable th {
@@ -296,7 +313,6 @@
 #GenerateStat {
   margin-bottom: 10px;
   margin-top: 0;
-  width: 90%;
   max-width: 320px;
   font-size: 1rem;
   border-radius: 8px;
@@ -304,10 +320,58 @@
 
 :root{  
   --ribbon-height: 56px;
-  --ribbon-gap: 8px; /* space between sheet and ribbon */
+  --ribbon-gap: 8px; 
 }
 
-/* Ribbon: always fixed at bottom, respect safe area on iPhone */
+
+
+#map {
+  width: 100vw;
+  height: calc(100vh - (var(--ribbon-height) + env(safe-area-inset-bottom)));
+}
+
+.ribbon-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 0 12px;
+  position: relative;
+}
+
+.ribbon-icon {
+  background: #fff;
+  border-radius: 18px;
+  box-shadow: 0 4px 18px rgba(0,120,215,0.18);
+  font-size: 2.3rem;
+  color: #0078d7;
+  border: 3px solid #0078d7;       
+  cursor: pointer;
+  margin-bottom: 0px; 
+  z-index: 2;
+  position: relative;
+  transition: box-shadow 0.2s, transform 0.1s;
+}
+
+.ribbon-icon.active,
+.ribbon-icon:focus {
+  box-shadow: 0 5px 20px rgba(39, 134, 212, 0.28);
+  background: #e3f2fd;
+  color: #2196ea;
+}
+
+.ribbon-label {
+  font-size: 0.95em;
+  color: #fff;
+  margin-top: 2px;
+  margin-bottom: 5px; 
+  text-align: center;
+  z-index: 1;
+  pointer-events: none;
+  font-family: 'Segoe UI', Arial, sans-serif;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.18);
+  white-space: nowrap; 
+}
+
 #ribbonPanel {
   position: fixed;
   left: 0;
@@ -317,38 +381,14 @@
   padding-bottom: env(safe-area-inset-bottom);
   display: flex;
   justify-content: center;
-  align-items: center;
-  gap: 32px;
+  align-items: flex-end;
+  gap: 12px;
   background: rgba(30,34,44,0.97);
   box-shadow: 0 -2px 12px rgba(0,0,0,0.18);
-  z-index: 99999; /* make sure it sits above floating canvases */
+  z-index: 99999;
   pointer-events: auto;
-}
-
-/* Reserve map height so ribbon does not cover map controls or content */
-#map {
-  width: 100vw;
-  height: calc(100vh - (var(--ribbon-height) + env(safe-area-inset-bottom)));
-}
-
-.ribbon-icon {
-  background: none;
-  border: none;
-  font-size: 2rem;
-  color: #fff;
-  opacity: 0.7;
-  cursor: pointer;
-  transition: opacity 0.2s, transform 0.1s;
-}
-
-.ribbon-icon.active{
-  opacity: 1;
-  background: #0078d7;
-  color: #fff;
-  box-shadow: 0 4px 18px rgba(0,120,215,0.25);
-  transform: scale(1.25) translateY(-8px);
-  font-size: 2.7rem;
-  z-index: 10;
+  padding-left: 24px;  
+  padding-right: 24px; 
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -371,11 +411,10 @@
   overflow: hidden;
 }
 
-/* Animation controls: bottom left */
 #animationCanvas.floating-canvas {
   left: 56px;
-  bottom: 80px; /* above the ribbon */
-  width: 380px;
+  bottom: 80px; 
+  width: 360px;
   max-width: 96vw;
   max-height: 38vh;
 }
@@ -400,13 +439,13 @@
 /* Stats: below graphs, top right */
 #statsCanvas.floating-canvas {
   right: 24px;
-  top: 340px; /* adjust as needed to be below graphs */
+  top: 340px; 
   width: 540px;
   max-width: 96vw;
   max-height: 60vh;
   display: flex;
   flex-direction: column;  
-  height: 40vh; /* or another fixed value */
+  height: 40vh; 
 }
 
 #statsCanvas .canvas-content {
@@ -420,12 +459,12 @@
 .canvas-header {
   background: #0078d7;
   color: #fff;
-  padding: 1px 10px;
+  padding: 0px 10px;
   font-size: 1.1rem;
   font-weight: bold;
-  display: flex;
-  align-items: flex-end;  
-  flex: 0 0 auto; /* header stays its natural height */
+  display: flex;  
+  align-items: center; 
+  flex: 0 0 auto; 
 }
 
 .canvas-header .tab-btn {
@@ -485,14 +524,14 @@
 .tab-content.active { display: block; }
 
 #helpCanvas.floating-canvas {
-  position: fixed; /* so it floats */
+  position: fixed;
   right: 32px;
-  bottom: 80px; /* above the ribbon */
+  bottom: 80px; 
   width: 600px;
   height: 60vh;
   max-width: 96vw;
   max-height: 60vh;
-  flex-direction: column; /* stack header + content */
+  flex-direction: column;
 }
 
 #helpCanvas .canvas-content {
@@ -506,7 +545,7 @@
   height: auto;
 }
 #helpCanvas ul {
-  margin-left: 1.2em;
+  margin-left: 0.1em;
   margin-bottom: 1em;
 }
 #helpCanvas h3, #helpCanvas h4 {
@@ -532,15 +571,13 @@
   height: 18px;
   cursor: se-resize;
 
-  /* Subtle dotted grip */
   background: 
     radial-gradient(circle, rgba(0,120,215,0.9) 22%, transparent 24%) 2px 2px/6px 6px;
   border-radius: 0 0 6px 0;
   opacity: 0.85;
 
-  /* Light shadow for separation */
   box-shadow: inset 0 0 3px rgba(0,0,0,0.15);
-  z-index: 10;
+  z-index: 1000;
 }
 
 .resizer:hover {
@@ -577,23 +614,31 @@
   color: #ff5252 !important;
 }
 
+
+.main-menu-title-row {  
+  display: flex;
+  align-items: center;
+  position: relative;
+}
+
 #mainLogo {
   position: absolute;
-  top: 0px;
-  left: 60px;
-  width: 80px;
+  top: 0px;  
+  width: 80px;  
+  margin-left: -22px; 
+  margin-top: -45px;
   z-index: 1100;
   pointer-events: none;
 }
 
 #controls label.inline-checkbox,
 .main-menu-filters label.inline-checkbox {
-  display: inline-flex;     /* must be inline so it sits on same row */
-  flex-direction: row;      /* ensure children are side-by-side */
-  align-items: center;      /* vertical centering */
-  margin-bottom: -10px;      /* override default label margin */
+  display: inline-flex;     
+  flex-direction: row;      
+  align-items: center;      
+  margin-bottom: -10px;    
   gap: 6px;
-  white-space: nowrap;      /* prevent wrapping */
+  white-space: nowrap;     
 }
 
 #controls .inline-checkbox input,
@@ -609,7 +654,7 @@
   bottom: 40px;
   transform: translateX(-50%);
   min-width: 220px;
-  max-width: 90vw;
+  max-width: 200vw;
   background: #185a9d;
   color: #fff;
   padding: 14px 28px;
@@ -628,51 +673,182 @@
 
 .filter-row {
   display: flex;
-  align-items:flex-start;
-  gap: 0px;
-  margin-bottom: 2px;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;  
+  flex-wrap: wrap; 
 }
 
 .filter-label {
-  flex: 1 1 auto;
-  font-size: 0.98rem;
-  color: #222;
-  display: flex;
-  align-items: center;
+  flex: 0 0 auto;
+  min-width: 26%;
+  max-width: 40%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0;
+  padding-right: 6px;
+  font-size: 1rem;
+  order: 0; 
 }
 
 .select-all-btn {
-  font-size: 0.95em;
-  padding: 2px 10px;
-  margin-left: 0px;
-  background: linear-gradient(90deg, #0078d7 60%, #00b4d8 100%);
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background 0.2s;
+  flex: 0 0 auto;
+  margin-left: 6px;
+  padding: 8px 10px;
+  font-size: 0.95rem;
+  white-space: nowrap;  
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  order: 1; 
 }
 .select-all-btn:hover {
   background: #005fa3;
 }
 
+.filter-select {
+  flex: 0 0 100%;     
+  width: 100%;
+  box-sizing: border-box;  
+  padding: 8px 10px;
+  border-radius: 8px;
+  order: 2;           
+  height: auto;       
+  max-height: 40vh; 
+  overflow-y: auto;
+}
+
+#shapeInfoCanvas.floating-canvas {
+  right: 32px;
+  top: 80px;
+  min-width: 220px;
+  max-width: 90vw;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 16px rgba(0,0,0,0.12);
+  border: 1px solid #ddd;
+  display: flex;
+  flex-direction: column;
+}
+
+.route-shape-list-header {
+  font-size: 0.9em;
+  color: #444;  
+}
+
+.route-shape-list {
+  font-size: 0.7em;
+  margin: 0;
+  padding-left: 18px;
+}
+
+#updateMapBtn {
+  width: 60%;  
+}
+
+/* added: resize helper visuals (arrow + label) */
+.resize-helper {
+  position: absolute;
+  right: 12px;
+  bottom: 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 5000;
+  pointer-events: none; /* don't block interactions */
+  animation: resize-helper-pulse 1s ease-in-out infinite;
+  transform-origin: center;
+}
+
+.resize-helper .resize-arrow {
+  width: 18px;
+  height: 18px;
+  background: #ffcf4d;
+  transform: rotate(45deg);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.18);
+  border-radius: 3px;
+  display: inline-block;
+  margin-left: 2px;
+}
+
+.resize-helper .resize-label {
+  background: #ffcf4d;
+  color: #2b2b2b;
+  padding: 6px 10px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.15);
+  white-space: nowrap;
+}
+
+/* subtle pulsing fade to draw attention */
+@keyframes resize-helper-pulse {
+  0%   { opacity: 1; transform: scale(1); }
+  50%  { opacity: 0.35; transform: scale(0.95); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/* utility class to force-hide quickly if needed */
+.resize-helper.hide { display: none !important; }
 
 
-/* ============== Mobile improvements ============== */
-/* Base touch target & typography improvements for mobile */
-@media (max-width: 900px) {
-  /* larger tap targets for all buttons */
-  button, .ribbon-icon {
-    min-height: unset;
-    padding: 12px 14px;
-    border-radius: 10px;
-    font-size: 1rem;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* ============== Mobile  ============== */
+@media (max-width: 900px) and (orientation: portrait){
+  .canvas-header {    
+    font-size: 0.9rem;             
+    margin-top: -5px;
+    margin-bottom: -5px;
   }
 
-  /* hide big logo on small screens to free space */
-  #mainLogo { display: none !important; }
 
-  /* make selects and inputs full width for easy tapping */
+  .canvas-header .tab-btn {
+    white-space: nowrap;
+    font-size: clamp(0.8rem, 2.5vw, 1rem);
+  }
+
+
+  .ribbon-icon {
+    font-size: 1.55em;
+    min-height: unset;
+    padding: 4px 4px;
+    border-radius: 10px;    
+  }
+
+  #mainLogo {
+    width: 64px;
+    height: 64px;
+    object-fit: contain;
+    margin-right: -18px;
+    margin-left: -32px;
+    z-index: 1201;
+    position: absolute !important;
+    margin-left: -10px;
+  }
+
+  .main-menu-title {
+    position: relative;
+    font-size: 1.1rem;
+    margin-left: 50px;
+  }
+
   #controls select,
   #controls input[type="text"],
   #controls input[type="file"],
@@ -687,39 +863,34 @@
     position: fixed;
     left: 0;
     right: 0;
-    top: auto;            /* remove the desktop top anchor which would be for desktop */
-    /* place controls above the ribbon with a small gap */
+    top: auto;         
     bottom: calc(var(--ribbon-height) + env(safe-area-inset-bottom));
     z-index: 2200 !important;
     margin: 0;
     border-radius: 16px 16px 0 0;
     padding: 12px;
-    max-height: 40vh; /* bottom-sheet height */
-    overflow-y: auto;
+    padding-bottom: calc(var(--ribbon-height) + env(safe-area-inset-bottom) - 10px) !important;
+    max-height: 50vh; 
+    max-width: 600px;
+    overflow-y: visible;
     background: linear-gradient(#ffffff, #f6f9fb);
     box-shadow: 0 -8px 30px rgba(0,0,0,0.18);
     display: flex;
     flex-direction: column;
+    justify-content: flex-end;
     transform: translateZ(0);
   }
 
-  /* small header style inside bottom-sheet */
-  .main-menu-title {
-    font-size: 1.1rem;
-    margin-left: 0;
-  }
 
-  /* disable resizable behaviour on small screens */
+
   .resizable-canvas {
     resize: none !important;
     min-width: unset;
     width: 96vw !important;
   }
 
-  /* Hide the resizer grip on mobile */
   .resizer { display: none !important; }
 
- /* Animation and Transit Score canvases: full width, fixed height, above ribbon */
   #animationCanvas.floating-canvas,
   #transitScoreCanvas.floating-canvas {
     left: 0 !important;
@@ -740,19 +911,73 @@
     transform: translateZ(0);
   }
 
+
+
   #animationCanvas.floating-canvas {
-    z-index: 2300;
-    height: 25vh !important; 
+    z-index: 2450;
+    height: auto !important;     
   }
+
+ #animationCanvas .canvas-content {
+    flex-direction: row !important;
+    align-items: center !important;    
+    justify-content:center !important;    
+    gap: 12px !important;     
+    padding-top: 10px !important; 
+    padding-bottom: 25px !important; 
+  }
+
+  #animationCanvas .row-controls label,
+  #animationCanvas .row-controls select,
+  #animationCanvas .row-controls span {    
+    align-items: center !important;
+    vertical-align: middle !important;
+    margin-bottom: 0 !important;
+    font-size: 1.0rem;    
+  }
+
+  #animationCanvas .row-buttons button {
+    font-size: 1.9rem !important;
+    padding-bottom: 2px;
+    white-space: nowrap;
+    background: none !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+  #animationCanvas .row-buttons .btn-label {
+    font-size: 0.7em !important;  
+    display: none !important;
+    padding-bottom: 2px;
+    white-space: nowrap;
+  }
+
   #transitScoreCanvas.floating-canvas {
     z-index: 2400;
     height: 40vh !important; 
   }
 
+  #transitScoreCanvas .canvas-content {
+    padding-top: 0px !important;
+    padding-bottom: 0px !important;
+  }
 
-   #graphsCanvas.floating-canvas,
-  #statsCanvas.floating-canvas,
-  #helpCanvas.floating-canvas {
+  #transitScoreValue {
+    font-size: 2em !important; 
+    font-weight: bold;    
+    color: #185a9d;
+    align-items: center;
+    margin: 6px 0 6px 0 !important;
+    transition: color 0.3s;
+  } 
+
+  #transitScoreSub{
+    font-size: 0.9rem !important; 
+    margin-top: -6px;
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+  }
+
+  #helpCanvas.floating-canvas{
     left: 0 !important;
     right: 0 !important;
     width: 100vw !important;
@@ -770,7 +995,383 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    border: #0000001a 2px solid !important;
   }
+
+  #helpCanvas .canvas-content {
+    background: #ddf4d8 !important;   
+  }
+
+  #helpCanvas .canvas-content,
+  #helpCanvas .canvas-content h3,
+  #helpCanvas .canvas-content h4,
+  #helpCanvas .canvas-content ul,
+  #helpCanvas .canvas-content li {
+    font-size: 0.85rem !important;
+  }
+  #helpCanvas .canvas-content ul,
+  #helpCanvas .canvas-content ul li {
+    padding-left: 0 !important;
+    margin-left: 10px !important;     
+  }
+
+
+  #graphsCanvas.floating-canvas,  #statsCanvas.floating-canvas {
+    left: 0 !important;
+    right: 0 !important;
+    width: 100vw !important;
+    min-width: 0 !important;
+    max-width: 100vw !important;
+    min-height: 35vh !important;
+    bottom: calc(var(--ribbon-height) + env(safe-area-inset-bottom)) !important;
+    padding-bottom: calc(var(--ribbon-height) + env(safe-area-inset-bottom) - 10px) !important;
+    top: auto !important;    
+    height:auto !important;
+    max-height: 50vh !important;
+    border-radius: 16px 16px 0 0;
+    z-index: 2400;
+    margin: 0;
+    padding: 0;
+    box-shadow: 0 -8px 30px rgba(0,0,0,0.18);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end; 
+    transform: translateZ(0);  
+  }
+
+
+  .close-canvas-btn {
+    padding: 10px;
+    margin-right: 8px;
+  }
+
+  #ribbonPanel {
+    max-height: 55px;
+    gap: 4px !important;
+  }
+
+  .ribbon-label {
+    font-size: 0.70em; 
+  }
+
+
+ .filter-row {
+    flex-wrap: nowrap;  
+    align-items: center;
+    gap: 8px;
+  }
+
+  .filter-label {
+    flex: 0 0 auto;
+    min-width: 26%;       
+    max-width: 40%;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    order: 0;             
+    font-size: 0.95rem;
+  }
+
+  .filter-select {
+    order: 1;             
+    flex: 1 1 auto;        
+    width: auto !important; 
+    min-width: 0;         
+    margin-top: 0;        
+    padding: 8px 10px;    
+    max-height: 44px;
+    overflow-y: auto;     
+    max-width: fit-content;
+  }
+
+  .select-all-btn {
+    order: 2;              
+    flex: 0 0 auto;    
+    flex-wrap: nowrap;    
+    margin-left: 6px;    
+  }
+
+  #tripsPerHourAnnotation {
+    font-size: 0.7rem !important;
+  }
+
+
+  #map { height: calc(100vh - (var(--ribbon-height) + env(safe-area-inset-bottom))); }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* ============== Mobile Landscape ============== */
+@media (max-width: 900px) and (orientation: landscape) {
+  .canvas-header {    
+    font-size: 0.8rem;             
+    margin-top: -5px;
+    margin-bottom: -5px;
+  }
+
+  .canvas-header .tab-btn {
+    white-space: nowrap;
+    font-size: clamp(0.8rem, 2.5vw, 1rem);
+  }
+
+  /* larger tap targets for all buttons */
+  .ribbon-icon {
+    font-size:  0.85rem!important;
+    padding: 4px 4px;
+    border-radius: 10px;    
+  }
+
+  #mainLogo {
+    width: 64px;
+    height: 64px;
+    object-fit: contain;
+    margin-right: -18px; 
+    margin-left: -32px;  
+    z-index: 1201;
+    position: absolute !important;
+    margin-left: -10px;
+  }
+
+  /* small header style inside left-sheet (was bottom-sheet in portrait) */
+  .main-menu-title {
+    position: relative;
+    font-size: 1.1rem;
+    margin-left: 50px;
+  }
+
+  
+  #controls select,
+  #controls input[type="text"],
+  #controls input[type="file"],
+  .main-menu-filters select {
+    width: 100%;
+    box-sizing: border-box;
+    font-size: 1rem;
+  }
+
+  #controls {
+    position: fixed;
+    left: 0;                /* keep controls accessible on left (like a left-sheet) */
+    top: 0;
+    width: auto;
+    max-width: 350px;
+    z-index: 2200 !important;
+    margin: 0;
+    border-radius: 0 16px 16px 0; 
+    padding: 12px;
+    max-height: 100vh; 
+    overflow-y: auto;
+    background: linear-gradient(#ffffff, #f6f9fb);
+    box-shadow: 8px 0 30px rgba(0,0,0,0.18); 
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end; 
+    transform: translateZ(0);
+  }
+
+  /* disable resizable behaviour on small screens */
+  .resizable-canvas {
+    resize: none !important;
+    min-width: unset;
+    width: 48vw !important; /* changed: occupy left ~half in landscape */
+  }
+
+  #updateButtonRow{
+    margin-bottom: 60px;        
+  }
+
+  /* Hide the resizer grip on mobile */
+  .resizer { display: none !important; }
+
+  /* Animation and Transit Score canvases: occupy left half-ish in landscape */
+  #animationCanvas.floating-canvas,
+  #transitScoreCanvas.floating-canvas {
+    /* changed from full-width bottom to left-column */
+    left: 0 !important;    
+    bottom: 0 !important;
+    width: 48vw !important;          /* occupy left ~half */
+    min-width: 0 !important;
+    max-width: 400px !important;
+    min-height: 80vh !important; /* ensure minimum height */
+    border-radius: 0 16px 16px 0;   
+    margin: 0;
+    padding: 0;
+    box-shadow: 8px 0 30px rgba(0,0,0,0.18); /* shadow to the right */
+    display: flex;
+    flex-direction: column;
+    transform: translateZ(0);
+    margin-bottom: 35px;
+  }
+
+  #animationCanvas.floating-canvas {
+    z-index: 2450;
+  }
+
+  /* adjust internal layout to vertical stack in a narrow left column */
+  #animationCanvas .canvas-content {
+    flex-direction: column !important;     /* changed: column to suit tall left column */
+    align-items: stretch !important;    
+    justify-content: flex-start !important;    
+    gap: 10px !important;     
+    padding-top: 6px !important;
+    padding-bottom: 2px !important;    
+  }
+
+  #animationCanvas .row-controls label,
+  #animationCanvas .row-controls select,
+  #animationCanvas .row-controls span {    
+    align-items: center !important;
+    vertical-align: middle !important;
+    font-size: 1.0rem;        
+  }
+
+  #animationCanvas .row-controls {
+    margin-top: 10px !important;
+    margin-bottom: 0 !important;
+    gap: 6px !important; /* reduce gap between controls */
+  }
+
+
+  #animationCanvas .row-buttons .btn-label {
+    font-size: 0.9em !important;
+  }
+
+  #transitScoreCanvas.floating-canvas {
+    z-index: 2400;
+    height: 100vh !important; /* changed to full height to match left column */
+  }
+
+  #transitScoreCanvas .canvas-content {
+    padding-top: 8px !important;
+    padding-bottom: 8px !important;
+  }
+
+  #transitScoreValue {
+    font-size: 2em !important;
+    font-weight: bold;    
+    color: #185a9d;
+    align-items: center;
+    margin: 6px 0 6px 0 !important;
+    transition: color 0.3s;
+  } 
+
+  #transitScoreSub{
+    font-size: 0.9rem !important;
+    margin-top: -6px;
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+  }
+
+  /* Help canvas moves to left column and becomes tall instead of bottom sheet */
+  #helpCanvas.floating-canvas{
+    left: 0 !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    width: 48vw !important;           /* changed: left-half */
+    height: 100vh !important;
+    max-height: 100vh !important;
+    border-radius: 0 16px 16px 0;
+    z-index: 2400;
+    margin: 0;
+    padding: 0;
+    box-shadow: 8px 0 30px rgba(0,0,0,0.18);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    border: #0000001a 2px solid !important;
+  }
+
+  #helpCanvas .canvas-content {
+    background: #ddf4d8 !important;    
+  }
+
+  #helpCanvas .canvas-content,
+  #helpCanvas .canvas-content h3,
+  #helpCanvas .canvas-content h4,
+  #helpCanvas .canvas-content ul,
+  #helpCanvas .canvas-content li {
+    font-size: 0.85rem !important;
+  }
+  #helpCanvas .canvas-content ul,
+  #helpCanvas .canvas-content ul li {
+    padding-left: 0 !important;
+    margin-left: 10px !important;     
+  }
+
+  /* Graphs and stats move to left column too */
+  #graphsCanvas.floating-canvas,  #statsCanvas.floating-canvas {
+    left: 0 !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    width: 48vw !important;        /* changed: left half */
+    min-width: 0 !important;
+    max-width: 48vw !important;
+    min-height: 100vh !important;
+    height: 100vh !important;
+    padding-bottom: 0 !important;
+    border-radius: 0 16px 16px 0;
+    z-index: 2400;
+    margin: 0;
+    padding: 0;
+    box-shadow: 8px 0 30px rgba(0,0,0,0.18);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    transform: translateZ(0);  
+  }
+
+  #graphsCanvas .canvas-header .tab-btn[data-tab] {
+    font-size: 0.75rem !important;
+    padding: 6px 12px !important;
+  }
+
+  #statsCanvas .canvas-header .tab-btn[data-tab] {
+    font-size: 0.75rem !important;
+    padding: 6px 12px !important;
+  }
+
+  #statsCanvas .canvas-content button,
+  #statsCanvas .tab-content button {
+    font-size: 0.75rem !important;
+    padding: 6px 12px !important;
+    margin: 2px 4px 2px 0 !important;
+  }
+
 
   /* bigger close button touch target */
   .close-canvas-btn {
@@ -778,12 +1379,150 @@
     margin-right: 8px;
   }
 
-  /* keep map visible by giving it bottom padding equal to ribbon + possible open sheet */
-  #map { height: calc(100vh - (var(--ribbon-height) + env(safe-area-inset-bottom))); }
+  #ribbonPanel {
+    gap: 4px !important;
+    max-height: 30px;
+    flex-direction: row;
+    justify-content: flex-end;
+  }
+
+
+  .ribbon-label {
+    font-size: 0.60em;
+  }
+
+  .filter-row {
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .filter-label {
+    flex: 0 0 auto;
+    min-width: 26%;
+    max-width: 40%;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    order: 0;
+    font-size: 0.95rem;
+  }
+
+  .filter-select {
+    order: 1;
+    flex: 1 1 auto;
+    width: auto !important;
+    min-width: 0;
+    margin-top: 0;
+    padding: 8px 10px;    
+    max-height: 44px;
+    overflow-y: auto;
+    max-width: fit-content;
+  }
+
+  .select-all-btn {
+    order: 2;
+    flex: 0 0 auto;    
+    flex-wrap: nowrap;
+    margin-left: 6px;    
+  }
+
+  #tripsPerHourAnnotation {
+    font-size: 0.7rem !important;
+  }
+
+  /* keep map visible by giving it left padding equal to the left-sheet width (approximately) */
+  /* changed: in portrait we reduce height to leave space for bottom sheet; in landscape we shift main area to the right */
+  #map {
+    height: 100vh;
+    margin-left: 48vw; /* push map to the right of the left-column canvases */
+  }
 }
 
-/* Improve scrolling performance on mobile */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 html, body, #controls, .canvas-content {
   -webkit-overflow-scrolling: touch;
   touch-action: manipulation;
+}
+
+/* Headway help icon (placed over trips-per-hour chart) */
+.trips-per-hour-chart-wrapper { position: relative; }
+
+.headway-help {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  line-height: 28px;
+  text-align: center;
+  border-radius: 50%;
+  background: #0078d7;
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.95rem;
+  cursor: default;
+  z-index: 2200;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+  outline: none;
+}
+
+/* tooltip box (hidden by default) */
+.headway-help .help-tooltiptext {
+  visibility: hidden;
+  opacity: 0;
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 300px;
+  max-width: calc(100vw - 40px);
+  background: rgba(54, 113, 158, 0.95);
+  color: #ffffff;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  line-height: 1.3;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+  transition: opacity 0.15s ease, visibility 0.15s;
+  pointer-events: none;
+  white-space: normal;
+  text-align: left;
+}
+
+/* show tooltip on hover/focus only on hover-capable (desktop) devices */
+@media (hover: hover) and (pointer: fine) {
+  .headway-help:hover .help-tooltiptext,
+  .headway-help:focus .help-tooltiptext {
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* hide the help icon on small screens (touch devices) */
+@media (max-width: 900px) {
+  .headway-help { display: none !important; }
 }

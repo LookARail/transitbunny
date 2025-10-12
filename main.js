@@ -1,8 +1,7 @@
-// Updated JavaScript: GTFS Animation with Accurate Interpolation Based on Stop Times
+let gtfsWorker = null;
 
 // === Global GTFS data ===
 let stops = [];
-let shapes = [];
 let routes = [];
 let trips = [];
 let stopTimes = [];
@@ -30,14 +29,12 @@ let calendar = [];
 let calendarDates = [];
 let serviceDateDict = {}; // { 'YYYYMMDD': Set(service_id) }
 let genericWeekdayDates = {}; // { 'Monday (Generic)': [date1, date2, ...], ... }
-let serviceDateFilterMode = false; // true if using service-date filter
+let serviceDateFilterMode = false; // true if using service-date filter, but for nearly all GTFS feeds this is false
 
 // === Precomputed maps ===
-let tripStartTimeMap = {};   // 
-let tripStopsMap     = {};   // 
+let tripStartTimeAndStopMap = {};   // 
 let blockIdTripMap = {};
 let stopTimesText = '';
-let stopTimesTripIndex = {};
 
 // === Short‑name lookup by route_type ===
 let shortAndLongNamesByType = {}; // 
@@ -50,6 +47,7 @@ let speedMultiplier = 10;
 
 let stopsById = new Map();           // stop_id -> {id,name,lat,lon}
 let shapesById = {};                 // shape_id -> [ {lat,lon,sequence,shape_dist_traveled}, ... ]
+let shapesRoute = {};              // shape_id -> corresponding
 let shapeCumulativeDist = {};        // shape_id -> [cumulative distances]
 
 let lastDraggedDepth = 0; // for handling drag events on markers
@@ -71,31 +69,25 @@ const ROUTE_TYPE_NAMES = {
 const map = L.map('map').setView([0, 0], 13);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-let vehKmPendingPoints = {}; // { route_id: [{ x, y }], ... }
+let vehKmPendingPoints = {}; 
 
 async function loadGtfsFromWebZip() {
   const url = 'gtfs.zip';
   try {
     const res = await fetch(url);
     const buffer = await res.arrayBuffer();
-    const zip = fflate.unzipSync(new Uint8Array(buffer));
-    LoadGTFSZipFile(zip);
+    await LoadGTFSZipFile(buffer); 
   } catch (err) {
     console.error('Failed to load GTFS ZIP:', err);
   }
 }
 
-
-// Function to load GTFS from a user-uploaded zip file
 async function loadGtfsFromUserUploadZip(file) {
-
   const reader = new FileReader();
-  reader.onload = function(e) {
+  reader.onload = async function(e) {
     try {
       const buffer = e.target.result;
-      const zip = fflate.unzipSync(new Uint8Array(buffer));
-
-      LoadGTFSZipFile(zip);     
+      await LoadGTFSZipFile(buffer); 
     } catch (err) {     
       alert('Failed to load GTFS ZIP: ' + err.message);
     }
@@ -111,65 +103,41 @@ async function LoadGTFSZipFile(zipFileInput) {
 
     clearAllMapLayersAndMarkers();
 
-    // We support three types of input:
-    // 1) File object (from input) -> read as ArrayBuffer (preferred)
-    // 2) ArrayBuffer or Uint8Array (raw zip bytes) -> preferred
-    // 3) Existing unzipped object { 'stops.txt': Uint8Array, ... } -> fallback (less efficient)
     let rawZipBuffer = null;
-    let fallbackZipObj = null;
 
     // detect type:
     if (zipFileInput instanceof File) {
-      // read raw bytes
       rawZipBuffer = await zipFileInput.arrayBuffer();
     } else if (zipFileInput instanceof ArrayBuffer) {
       rawZipBuffer = zipFileInput;
     } else if (zipFileInput instanceof Uint8Array) {
       rawZipBuffer = zipFileInput.buffer;
-    } else if (zipFileInput && typeof zipFileInput === 'object' && (zipFileInput['stops.txt'] || zipFileInput['routes.txt'])) {
-      // fallback: the user passed an already-unzipped object mapping names -> Uint8Array
-      fallbackZipObj = zipFileInput;
     } else {
-      throw new Error('LoadGTFSZipFile: unsupported input type. Provide a File, ArrayBuffer, Uint8Array, or unzipped object.');
+      throw new Error('LoadGTFSZipFile: unsupported input type. Provide a File, ArrayBuffer, or Uint8Array.');
     }
 
-    // If fallback path, do per-file size check as before (we have internal files)
-    const maxSize = 500 * 1024 * 1024; // 500MB
-    if (fallbackZipObj) {
-      for (const fname of ['stops.txt','routes.txt','trips.txt','shapes.txt','stop_times.txt']) {
-        const arr = fallbackZipObj[fname];
-        if (arr && arr.length > maxSize) {
-          alert(`${fname} is too large (${(arr.length / (1024*1024)).toFixed(1)} MB). Please use a smaller GTFS file (max 500 MB per file).`);
-          hideProgressBar();
-          return;
-        }
-      }
-    } else {
-      // optional: check rawZipBuffer overall size (not per-file)
-      if (rawZipBuffer.byteLength && rawZipBuffer.byteLength > 1024 * 1024 * 1024) { // 1GB arbitrary guard
-        // warn but not block
-        console.warn('Raw zip is very large:', rawZipBuffer.byteLength);
-      }
+    if (rawZipBuffer.byteLength && rawZipBuffer.byteLength > 1024 * 1024 * 1024) {
+      console.warn('Raw zip is very large:', rawZipBuffer.byteLength);
     }
 
-    // prepare variables for weighted progress (we'll fill weights after worker posts file sizes)
     const fileProgress = {};
     const weights = {};
     let lastOverall = 0;
     let worker = null;
 
     const results = await new Promise((resolve, reject) => {
-      worker = new Worker('gtfsWorker.js');
+      if (gtfsWorker) {
+        gtfsWorker.terminate();
+      }
+      gtfsWorker = new Worker('gtfsWorker.js');
+      worker = gtfsWorker;
 
-      // When worker posts file sizes, we initialize weights and progress map
       worker.onmessage = (ev) => {
         const msg = ev.data;
         if (!msg) return;
 
-        if (msg.type === 'files') {
-          // msg.files: { 'stops.txt': length, ... }
-          const filesObj = msg.files || {};
-          // compute weights by byte length
+        if (msg.type === 'files') {          
+          const filesObj = msg.files || {};          
           let total = 0;
           Object.keys(filesObj).forEach(f => { total += filesObj[f] || 0; });
           if (total > 0) {
@@ -178,115 +146,100 @@ async function LoadGTFSZipFile(zipFileInput) {
               fileProgress[f] = 0;
             });
           } else {
-            // fallback equal weights
             const keys = Object.keys(filesObj);
             const w = keys.length ? 1 / keys.length : 0;
             keys.forEach(f => { weights[f] = w; fileProgress[f] = 0; });
           }
-          // small visual bump after init
           setProgressBar(8);
-        } else if (msg.type === 'status') {
-          // show small visual bump on status messages
+        } else if (msg.type === 'status') {        
           setProgressBar(Math.max(lastOverall, 8));
           console.log('[Worker status]', msg.message);
         } else if (msg.type === 'progress') {
-          // update per-file progress
-          if (msg.file && weights[msg.file] !== undefined) {
-            fileProgress[msg.file] = Math.max(0, Math.min(1, msg.progress || 0));
-          } else if (msg.file) {
-            // unknown file - add minimal weight (optional)
-            if (fileProgress[msg.file] === undefined) { fileProgress[msg.file] = Math.max(0, Math.min(1, msg.progress || 0)); weights[msg.file] = 0.0001; }
-            else fileProgress[msg.file] = Math.max(fileProgress[msg.file], Math.max(0, Math.min(1, msg.progress || 0)));
+          if (msg.file === 'filtered_stop_times') {
+            setProgressBar(Math.round((msg.progress || 0) * 100), 'Reloading schedule for filtered trips...');           
+            console.log(msg.file + ' progress:', msg.progress);
+            return;
+          }else{
+            if (msg.file && weights[msg.file] !== undefined) {
+              fileProgress[msg.file] = Math.max(0, Math.min(1, msg.progress || 0));
+            } else if (msg.file) {            
+              if (fileProgress[msg.file] === undefined) { fileProgress[msg.file] = Math.max(0, Math.min(1, msg.progress || 0)); weights[msg.file] = 0.0001; }
+              else fileProgress[msg.file] = Math.max(fileProgress[msg.file], Math.max(0, Math.min(1, msg.progress || 0)));
+            }
+            
+            let weighted = 0;
+            let sumW = 0;
+            Object.keys(weights).forEach(f => {
+              const w = weights[f] || 0;
+              weighted += w * (fileProgress[f] || 0);
+              sumW += w;
+            });
+            const avg = sumW > 0 ? (weighted / sumW) : 0;
+            
+            let overall = 10 + Math.round(avg * 80);
+            overall = Math.max(lastOverall, overall);
+            lastOverall = overall;
+            setProgressBar(overall);
           }
-
-          // compute weighted average
-          let weighted = 0;
-          let sumW = 0;
-          Object.keys(weights).forEach(f => {
-            const w = weights[f] || 0;
-            weighted += w * (fileProgress[f] || 0);
-            sumW += w;
-          });
-          const avg = sumW > 0 ? (weighted / sumW) : 0;
-
-          // map avg to 10..90 and ensure monotonic progress
-          let overall = 10 + Math.round(avg * 80);
-          overall = Math.max(lastOverall, overall);
-          lastOverall = overall;
-          setProgressBar(overall);
-
         } else if (msg.type === 'done') {
           resolve(msg.results);
         } else if (msg.type === 'error') {
           reject(new Error(msg.message || 'Worker error'));
         }
+      
       };
+
 
       worker.onerror = (errEv) => {
         reject(errEv.error || new Error('Worker runtime error'));
       };
 
-      // Send data to worker.
-      // Preferred: transfer rawZipBuffer (zero-copy)
-      if (rawZipBuffer) {
-        // ensure we have an ArrayBuffer to transfer
-        const ab = (rawZipBuffer instanceof ArrayBuffer) ? rawZipBuffer : rawZipBuffer.buffer || rawZipBuffer;
-        worker.postMessage({ rawZip: ab }, [ab]);
-      } else if (fallbackZipObj) {
-        // fallback: send pre-unzipped files as before; transfer each buffer to avoid copying when possible
-        const transfer = [];
-        const cloneable = {};
-        Object.keys(fallbackZipObj).forEach(k => {
-          const v = fallbackZipObj[k];
-          cloneable[k] = v;
-          if (v && v.buffer) transfer.push(v.buffer);
-          else if (v instanceof ArrayBuffer) transfer.push(v);
+      if (!worker._requestDispatcherInstalled) {
+        worker._requestDispatcherInstalled = true;
+        worker._nextWorkerReqId = 1;
+        worker._pendingRequests = new Map();
+        worker.addEventListener('message', (ev) => {
+          const msg = ev.data;
+          if (!msg) return;
+          const rid = msg.requestId || null;
+          if (!rid) return;
+          const ctx = worker._pendingRequests.get(rid);
+          if (!ctx) return;
+          clearTimeout(ctx.timer);
+          worker._pendingRequests.delete(rid);
+          if (msg.type === 'filteredStopTimes') ctx.resolve(msg.stopTimes);
+          else if (msg.type === 'error') ctx.reject(new Error(msg.message || 'Worker error'));
+          else ctx.reject(new Error('Unexpected worker reply'));
         });
-        worker.postMessage({ zipFile: cloneable }, transfer);
-      } else {
-        reject(new Error('No zip data to send to worker'));
+      }
+
+      // Send raw ZIP buffer to worker
+      try {
+        const uint8 = (rawZipBuffer instanceof Uint8Array) ? rawZipBuffer : new Uint8Array(rawZipBuffer);
+        worker.postMessage({ rawZip: uint8 }, [uint8.buffer]);
+      } catch (err) {
+        reject(new Error('Failed to transfer raw ZIP to worker: ' + (err && err.message)));
       }
     });
 
-    // worker done; terminate
-    if (worker) {
-      try { worker.terminate(); } catch (e) {}
-      worker = null;
-    }
-
-    // UI bump to show near-complete parsing
     setProgressBar(95);
 
-    // assign results back to your globals (unchanged from earlier)
     stops = results.stops || [];
     if (results.stopsById && !(results.stopsById instanceof Map)) {
       stopsById = new Map(Object.entries(results.stopsById || {}).map(([k,v]) => [k, v]));
     } else {
       stopsById = results.stopsById || new Map();
     }
-
-    shapes = results.shapes || [];
+    
     shapesById = results.shapesById || {};
     shapeIdToDistance = results.shapeIdToDistance || {};
     routes = results.routes || [];
-    trips = results.trips || [];    
-    stopTimes = [];    //not building stopTimes here
-    stopTimesText = results.stop_times_text || '';
-    stopTimesTripIndex = results.stop_times_trip_index || {};
-    tripStartTimeMap = results.tripStartTimeMap || {};
-
-    if (results.tripStopsMap) {
-      tripStopsMap = results.tripStopsMap; // Now an array of stop_ids in correct order
-    } else {
-      tripStopsMap = {};
-    }
-
+    trips = results.trips || [];        
     calendar = results.calendar || [];
     calendarDates = results.calendar_dates || [];
 
-    // post-parse initialization
     buildServiceDateDict();
-    initializeTripsRoutes(trips, routes);
+    initializeTripsRoutesShape(trips, routes);
     plotFilteredStopsAndShapes();
 
     setProgressBar(100);
@@ -299,50 +252,40 @@ async function LoadGTFSZipFile(zipFileInput) {
   }
 }
 
-function buildFilteredStopTimes(tripIds, stopTimesText, tripLineIndex) {
-  if (!stopTimesText || !tripLineIndex) return [];
-  const lines = stopTimesText.split(/\r?\n/);
-  const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-  const idx = {
-    trip_id: headers.indexOf('trip_id'),
-    arrival_time: headers.indexOf('arrival_time'),
-    departure_time: headers.indexOf('departure_time'),
-    stop_id: headers.indexOf('stop_id'),
-    stop_sequence: headers.indexOf('stop_sequence')
-  };
-  const stopTimes = [];
-  for (const tripId of tripIds) {
-    const range = tripLineIndex[tripId];
-    if (!range) continue;
-    for (let i = range.start; i <= range.end; i++) {
-      const row = lines[i];
-      if (!row) continue;
-      const cols = row.split(',');
-      stopTimes.push({
-        trip_id: cols[idx.trip_id] ? cols[idx.trip_id].trim() : '',
-        arrival_time: cols[idx.arrival_time] ? cols[idx.arrival_time].trim() : '',
-        departure_time: cols[idx.departure_time] ? cols[idx.departure_time].trim() : '',
-        stop_id: cols[idx.stop_id] ? cols[idx.stop_id].trim() : '',
-        stop_sequence: parseInt(cols[idx.stop_sequence], 10) || 0
-      });
+
+function requestFilteredStopTimesFromWorker(tripIds, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    if (!gtfsWorker) return reject(new Error('No GTFS worker available'));
+    const workerInst = gtfsWorker;
+    if (!workerInst._requestDispatcherInstalled) {
+      return reject(new Error('Worker request dispatcher not installed'));
     }
-  }
-  return stopTimes;
+    const reqId = String(workerInst._nextWorkerReqId++);
+    const timer = setTimeout(() => {
+      workerInst._pendingRequests.delete(reqId);
+      reject(new Error('Timeout waiting for filteredStopTimes'));
+    }, timeoutMs);
+    workerInst._pendingRequests.set(reqId, { resolve, reject, timer });
+
+    workerInst.postMessage({
+      type: 'extractStopTimesForTrips',
+      requestId: reqId,
+      tripIds: tripIds
+    });
+  });
 }
 
 
+
 function clearAllMapLayersAndMarkers() {
-  // Remove stops layer if present
   if (stopsLayer && map.hasLayer(stopsLayer)) {
     map.removeLayer(stopsLayer);
     stopsLayer = null;
   }
-  // Remove shapes layer if present
   if (shapesLayer && map.hasLayer(shapesLayer)) {
     map.removeLayer(shapesLayer);
     shapesLayer = null;
   }
-  // Remove all vehicle markers
   if (Array.isArray(allVehicleMarkers)) {
     allVehicleMarkers.forEach(marker => {
       if (marker && map.hasLayer(marker)) {
@@ -358,7 +301,6 @@ function clearAllMapLayersAndMarkers() {
   remainingTrips = [];
     // Clear global GTFS data
   stops = [];
-  shapes = [];
   routes = [];
   trips = [];
   stopTimes = [];
@@ -367,9 +309,8 @@ function clearAllMapLayersAndMarkers() {
   serviceIds = [];
   filteredTrips = [];
   // Clear precomputed maps
-  tripStartTimeMap = {};
-  tripStopsMap = {};
-  stopTimesTripIndex = {};
+  tripStartTimeAndStopMap = {};
+  tripFirstStopsMap = {};
   // Clear short-name lookup
   shortAndLongNamesByType = {};
   shortNameToServiceIds = {};
@@ -387,7 +328,6 @@ function buildServiceDateDict() {
   genericWeekdayDates = {};
   serviceDateFilterMode = false;
 
-  // Helper: get all dates between two YYYYMMDD (inclusive)
   function getDatesBetween(start, end) {
     const dates = [];
     let d = new Date(
@@ -456,7 +396,6 @@ function buildServiceDateDict() {
     }
     // For each weekday, if at least 3 dates with no modification, create a "Monday (Generic)" etc entry
     for (const wd in weekdayDates) {
-      //console.log(`Weekday ${wd} has ${weekdayDates[wd].length} unmodified dates`);      
       if (weekdayDates[wd].length >= 3) {
         const label = wd.charAt(0).toUpperCase() + wd.slice(1) + ' (Generic)';
         genericWeekdayDates[label] = weekdayDates[wd].slice(0, 3); // pick first 3
@@ -479,17 +418,14 @@ function updateServiceDateFilterUI() {
   const serviceDateSelect = document.getElementById('serviceDateSelect');
 
   if (serviceDateFilterMode) {
-    // Show service-date, hide serviceId
     serviceDateLabel.style.display = '';
     serviceIdLabel.style.display = 'none';
     serviceIdSelect.style.display = 'none';
 
-    // Build options: generic weekdays first, then all dates sorted
     let options = [];
     for (const label in genericWeekdayDates) {
       options.push(`<option value="GENERIC:${label}">${label}</option>`);
     }
-    // List all dates (YYYYMMDD) sorted
     const allDates = Object.keys(serviceDateDict).sort();
     for (const date of allDates) {
       const y = date.slice(0,4), m = date.slice(4,6), d = date.slice(6,8);
@@ -497,46 +433,49 @@ function updateServiceDateFilterUI() {
     }
     serviceDateSelect.innerHTML = options.join('');
     
-    // --- Limit to 2 selections ---
     serviceDateSelect.onchange = function(e) {
       const selected = Array.from(this.selectedOptions);
       if (selected.length > 2) {
-        // Deselect the last selected option
         selected[selected.length - 1].selected = false;
         alert('You can select up to 2 service dates only.');
       }
       filterTrips();
     };
   } else {
-    // Hide service-date, show serviceId
     serviceDateLabel.style.display = 'none';
     serviceIdLabel.style.display = '';
     serviceIdSelect.style.display = '';
   }
 }
 
-//#endregion  ParseData
 
 
 
-// === Data Relationships & Filters ===
-function initializeTripsRoutes(tripsArr, routesArr) {
+function initializeTripsRoutesShape(tripsArr, routesArr) {
   shortAndLongNamesByType = {};
 
   const routeMap = new Map(routesArr.map(r=>[r.route_id,r]));
   routeTypes = [...new Set(routesArr.map(r => r.route_type))];
   serviceIds = [...new Set(tripsArr.map(t => t.service_id))];
   
-   // Assign route object to each trip first!
   tripsArr.forEach(t => t.route = routeMap.get(t.route_id));
 
-  // Build shortNamesByType per route_type
+  if (shapesById) {
+    Object.values(tripsArr).forEach(trip => {
+      const route = routeMap.get(trip.route_id); 
+      if (route)
+      {
+        shapesRoute[trip.shape_id] = route;      
+      }
+    });
+  }
+
   routesArr.forEach(r => {
     if (!shortAndLongNamesByType[r.route_type]) shortAndLongNamesByType[r.route_type] = new Set();
     shortAndLongNamesByType[r.route_type].add(`${r.route_short_name}-${r.route_long_name}`);
   });
 
-  shortNameToServiceIds = {}; // Reset mapping
+  shortNameToServiceIds = {}; 
   tripsArr.forEach(t => {
     const key = `${t.route.route_short_name}-${t.route.route_long_name}`;
     if (!shortNameToServiceIds[key]) shortNameToServiceIds[key] = new Set();
@@ -566,7 +505,6 @@ function populateFilters() {
   rtSel.onchange = filterTrips;
   svSel.onchange = filterTrips;
 
-  // When route‐type changes, update short‐names dropdown
   rtSel.onchange = () => {
     const chosen = Array.from(rtSel.selectedOptions).map(o => o.value);
     let names = new Set();
@@ -580,7 +518,6 @@ function populateFilters() {
     shSel.dispatchEvent(new Event('change')); // trigger short name change
   };
 
-  // When short-name changes, update service IDs dropdown
   shSel.onchange = () => {
     const chosenNames = Array.from(shSel.selectedOptions).map(o => o.value);
     let validServiceIds = new Set();
@@ -593,19 +530,17 @@ function populateFilters() {
 
   svSel.onchange = filterTrips;
 
-  // Service-date filter
   if (sdSel) {
     sdSel.onchange = filterTrips;
   }
 
-  // trigger initial population of short names
   rtSel.dispatchEvent(new Event('change'));
 }
 
 let filteredTrips1 = [];
 let filteredTrips2 = [];
 
-function filterTrips() {
+async function filterTrips(useAllServiceDates = false) {
   const types = Array.from(document.getElementById('routeTypeSelect').selectedOptions).map(o => o.value);
   const names = Array.from(document.getElementById('routeShortNameSelect').selectedOptions).map(o => o.value);
   
@@ -630,20 +565,23 @@ function filterTrips() {
       selectedServiceIdsArr.push(ids);
     }
 
-    // Filter for each service date
-    if (selectedServiceIdsArr.length > 0) {
+    if (selectedServiceIdsArr.length > 0 || useAllServiceDates) {
       filteredTrips1 = trips.filter(t =>
         types.includes(t.route.route_type) &&
-        names.includes(`${t.route.route_short_name}-${t.route.route_long_name}`) &&
-        selectedServiceIdsArr[0].has(t.service_id)
+        names.includes(`${t.route.route_short_name}-${t.route.route_long_name}`)
       );
+      if(!useAllServiceDates){
+        filteredTrips1 = filteredTrips1.filter(t =>selectedServiceIdsArr[0].has(t.service_id));
+      }
     }
-    if (selectedServiceIdsArr.length > 1) {
+    if (selectedServiceIdsArr.length > 1 || useAllServiceDates) {
       filteredTrips2 = trips.filter(t =>
         types.includes(t.route.route_type) &&
-        names.includes(`${t.route.route_short_name}-${t.route.route_long_name}`) &&
-        selectedServiceIdsArr[1].has(t.service_id)
+        names.includes(`${t.route.route_short_name}-${t.route.route_long_name}`)        
       );
+      if(!useAllServiceDates){
+        filteredTrips2 = filteredTrips2.filter(t =>selectedServiceIdsArr[1].has(t.service_id));
+      }
     }
     
     const tripMap = new Map();
@@ -663,48 +601,74 @@ function filterTrips() {
     filteredTrips2 = [];
   }
 
-  //clear and rebuild stopTimes for filteredTrips
-  stopTimes = [];
-  stopTimes = buildFilteredStopTimes(filteredTrips.map(t => t.trip_id), stopTimesText, stopTimesTripIndex);
-  console.log(`Filtered trips: ${filteredTrips.length}, stopTimesTextSize: ${stopTimesText.length}, stopTimesTripIndexSize: ${Object.keys(stopTimesTripIndex).length}, Filtered stopTimes: ${stopTimes.length}`);
+  
+  const haveTrips = new Set(stopTimes.map(r => String(r.trip_id)));
+  const missingTripIds = filteredTrips.filter(tid => !haveTrips.has(String(tid.trip_id)));
+
+  if (missingTripIds.length > 0) {
+    showProgressBar(); 
+    setProgressBar(0, 'Loading stop times for filtered trips...');   
+    const newStopTimes = await requestFilteredStopTimesFromWorker(missingTripIds.map(t => t.trip_id));              
+    hideProgressBar();
+    stopTimes = stopTimes.concat(newStopTimes);
+    tripStartTimeAndStopMap = {}; //build tripStartTimemap   
+    stopTimes.forEach(st => {
+      if (st.stop_sequence == 1) {
+        const depTimeStr = st.departure_time || st.arrival_time || null;
+        if (depTimeStr) {
+          const depTimeSec = timeToSeconds(depTimeStr);
+          // Only set if not already set, or if this depTimeSec is earlier
+          if (
+            !tripStartTimeAndStopMap[st.trip_id] 
+          ) {
+            tripStartTimeAndStopMap[st.trip_id] = {
+              departureTimeSec: depTimeSec,
+              stop_id: st.stop_id
+            };
+          }
+        }
+      }
+    });
+
+  }
 }
 
-// Skip markercluster plugin overhead entirely below this count
 let skipAggregatingStopThreshold = 200;
 function plotFilteredStopsAndShapes(tripsToShow) {
-  // Remove old layers
   if (stopsLayer && map.hasLayer(stopsLayer)) map.removeLayer(stopsLayer);
   if (shapesLayer && map.hasLayer(shapesLayer)) map.removeLayer(shapesLayer);
 
-  // --- decide which stops/shapes to plot (unchanged) ---
-  let stopsToPlot, shapesToPlot;
+  let stopsToPlot;
+  let shapesToPlot = [];
 
-  if (Array.isArray(tripsToShow) && tripsToShow.length > 0) {
-    const usedStops = new Set();
+  if (Array.isArray(tripsToShow) && tripsToShow.length > 0) {    
+    
+    const tripIdsToShow = new Set(tripsToShow.map(t => t.trip_id));    
+    const usedStops = new Set(stopTimes.filter(st=> tripIdsToShow.has(st.trip_id)).map(st => st.stop_id));
+    stopsToPlot = stops.filter(s => usedStops.has(s.id));
+    
     const usedShapes = new Set();
     tripsToShow.forEach(t => {
       usedShapes.add(t.shape_id);
-      (tripStopsMap[t.trip_id] || []).forEach(id => usedStops.add(id));
     });
-    stopsToPlot = stops.filter(s => usedStops.has(s.id));
-    shapesToPlot = shapes.filter(s => usedShapes.has(s.shape_id));
+    usedShapes.forEach(shape_id => {
+      if (shapesById[shape_id]) shapesToPlot.push(...shapesById[shape_id]);
+    });
   } else {
     stopsToPlot = stops;
-    shapesToPlot = shapes;
+    shapesToPlot = Object.values(shapesById).flat();
   }
 
-  // --- Adaptive clustering: scale cluster radius by number of stops (continuous) ---
+
   const totalStops = stopsToPlot.length;
 
-  // Parameters you can tune:
-  const basePixels = 60;         // pixel radius at ref zoom when scale==1
-  const refZoom = 14;            // zoom where basePixels is meaningful
-  const clampMaxPx = 100;        // absolute max pixel radius to avoid giant bubbles
-  const minMultiplier = 0.20;    // smallest fraction of basePixels when stops are few
-  const minCount = 200;          // lower edge of scaling (below this -> mostly small radius)
-  const maxCount = 3000;        // upper edge of scaling (above this -> full radius)
+  const basePixels = 60;        
+  const refZoom = 14;         
+  const clampMaxPx = 100;      
+  const minMultiplier = 0.20;    
+  const minCount = 200;      
+  const maxCount = 3000;    
 
-  // smoothstep helper: maps x in [a,b] -> 0..1 smoothly
   function smoothstep(a, b, x) {
     if (x <= a) return 0;
     if (x >= b) return 1;
@@ -712,18 +676,13 @@ function plotFilteredStopsAndShapes(tripsToShow) {
     return t * t * (3 - 2 * t);
   }
 
-  // map count -> scale [0..1]
   const rawScale = smoothstep(minCount, maxCount, totalStops);
-  // final multiplier between minMultiplier .. 1.0
   const multiplier = minMultiplier + (1 - minMultiplier) * rawScale;
 
-  // Create stopsLayer using a radius function that incorporates multiplier
   stopsLayer = (typeof L.markerClusterGroup === 'function')
     ? L.markerClusterGroup({
         chunkedLoading: true,
-        // maxClusterRadius gets zoom param -> return pixel radius
         maxClusterRadius: function (zoom) {
-          // exponential zoom scaling (same idea as before): basePixels * 2^(refZoom - zoom)
           const zoomScaledBase = basePixels * Math.pow(2, refZoom - zoom);
           const px = Math.max(6, Math.round(zoomScaledBase * multiplier));
           return Math.min(clampMaxPx, px);
@@ -735,7 +694,6 @@ function plotFilteredStopsAndShapes(tripsToShow) {
 
      if (totalStops <= skipAggregatingStopThreshold) stopsLayer = L.layerGroup();
 
-  // --- Add clustered stops ---
   for (const stop of stopsToPlot) {
     const marker = L.circleMarker([stop.lat, stop.lon], {
       radius: 4,
@@ -746,28 +704,51 @@ function plotFilteredStopsAndShapes(tripsToShow) {
     stopsLayer.addLayer(marker);
   }
 
-  // --- Add shapes (unchanged) ---
   shapesLayer = L.layerGroup();
-  const shapesById = {};
+  const shapesGrouped = {};
   for (const s of shapesToPlot) {
-    if (!shapesById[s.shape_id]) shapesById[s.shape_id] = [];
-    shapesById[s.shape_id].push(s);
+    if (!shapesGrouped[s.shape_id]) shapesGrouped[s.shape_id] = [];
+    shapesGrouped[s.shape_id].push(s);
   }
-  for (const shape_id in shapesById) {
-    const shapePoints = shapesById[shape_id]
+  for (const shape_id in shapesGrouped) {
+    const shapePoints = shapesGrouped[shape_id]
       .sort((a, b) => a.sequence - b.sequence)
       .map(s => [s.lat, s.lon]);
-    const polyline = L.polyline(shapePoints, {
-      color: 'blue',
-      weight: 2
-    });
-    shapesLayer.addLayer(polyline);
+    const route = shapesRoute[shape_id] ? shapesRoute[shape_id] : null;
+    if (route?.route_type === 3) {
+      const color = route?.route_color ? `#${route.route_color}` : 'blue';
+      const polyline = L.polyline(shapePoints, {
+        shape_id: shape_id,
+        color: color,
+        weight: 2,
+        interactive: true,
+        touchTolerance: 80 
+      });
+      shapesLayer.addLayer(polyline);
+    }
+  }
+
+  for (const shape_id in shapesGrouped) {
+    const shapePoints = shapesGrouped[shape_id]
+      .sort((a, b) => a.sequence - b.sequence)
+      .map(s => [s.lat, s.lon]);
+    const route = shapesRoute[shape_id] ? shapesRoute[shape_id] : null;
+    if (route?.route_type !== 3) {
+      const color = route?.route_color ? `#${route.route_color}` : 'blue';
+      const polyline = L.polyline(shapePoints, {
+        shape_id: shape_id,
+        color: color,
+        weight: 3,
+        interactive: true,
+        touchTolerance: 80 
+      });
+      shapesLayer.addLayer(polyline);
+    }
   }
 
   stopsLayer.addTo(map);
   shapesLayer.addTo(map);
 
-  // Fit bounds
   const allCoords = [
     ...stopsToPlot.map(s => [s.lat, s.lon]),
     ...shapesToPlot.map(s => [s.lat, s.lon])
@@ -777,8 +758,7 @@ function plotFilteredStopsAndShapes(tripsToShow) {
     map.fitBounds(bounds);
   }
 
-  // --- Debug / tuning logs (remove in production) ---
-  // console.log('stopsCount=', totalStops, 'scale=', rawScale.toFixed(2), 'mult=', multiplier.toFixed(2));
+  setupShapeHoverInfo();
 }
 
 
@@ -792,16 +772,14 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
 }
 
 
-// === Utility: Parse HH:MM:SS into seconds ===
 function timeToSeconds(t) {
   const [h, m, s] = t.split(':').map(Number);
   return h * 3600 + m * 60 + s;
 }
 
-// === Interpolate times between stops (distance-based) ===
 function interpolateTripPath(trip) {
   const tripStops = stopTimes.filter(st=>st.trip_id===trip.trip_id).sort((a,b)=>a.stop_sequence-b.stop_sequence);
-  const shapePts = shapes.filter(s=>s.shape_id===trip.shape_id).sort((a,b)=>a.sequence-b.sequence);
+  const shapePts = (shapesById[trip.shape_id] || []).slice().sort((a,b)=>a.sequence-b.sequence);
   const stopPositions = tripStops.map(st=>{
     const stop = stops.find(s=>s.id===st.stop_id);
     return { lat:stop.lat, lon:stop.lon, time: timeToSeconds(st.departure_time) };
@@ -823,16 +801,13 @@ function interpolateTripPath(trip) {
   return timedPath;
 }
 
-// === Animation Controls ===
 function initializeAnimation() {
-  // Clear the trip plot data
   tripPlotData.labels = [];
   tripPlotData.datasets[0].data = [];
   tripPlotData.datasets[1].data = [];
   if (tripPlotChart) tripPlotChart.update();
   hourTicks = [];
 
-  //clear the vehicle km chart data
   vehKmData = {};
   if (vehKmChart) {
     vehKmChart.data.datasets = [];
@@ -840,19 +815,15 @@ function initializeAnimation() {
     vehKmChart.update();
   }
 
-  // For coloring and plotting
   window.tripIds1 = new Set(filteredTrips1.map(t => t.trip_id));
   window.tripIds2 = new Set(filteredTrips2.map(t => t.trip_id));
 
   if (!filteredTrips.length) { alert('No trips match filters'); return; }
-  // compute startTime for filtered trips and find earliest
 
-  // filter geometry
   plotFilteredStopsAndShapes(filteredTrips);
 
-  // prepare remaining
   remainingTrips = filteredTrips.map(t => {
-    t.startTime = tripStartTimeMap[t.trip_id] ?? null;
+    t.startTime = tripStartTimeAndStopMap[t.trip_id]?.departureTimeSec ?? null;
     return t;
   }).filter(t => t.startTime != null);
 
@@ -861,7 +832,6 @@ function initializeAnimation() {
     if (!blockIdTripMap[t.block_id]) blockIdTripMap[t.block_id] = [];
     blockIdTripMap[t.block_id].push(t);
   });
-  // Sort each block's trips by startTime
   Object.values(blockIdTripMap).forEach(arr => arr.sort((a, b) => a.startTime - b.startTime));
   Object.values(blockIdTripMap).forEach(tripArr => {for (let i = 0; i < tripArr.length - 1; i++) {tripArr[i].nextTrip = tripArr[i + 1];}
   });
@@ -878,7 +848,6 @@ function initializeAnimation() {
 
   buildMostCommonShapeIdByRouteDir();
 
-  // determine earliest start time among remainingTrips
   animationTime = remainingTrips.reduce((min, t) => Math.min(min, t.startTime), Infinity);
 
   if (animationTime === Infinity) { alert('No valid stop times'); return; }
@@ -910,14 +879,12 @@ function UpdateAnimationOnAnimationTimeChange(){
 
 
 function UpdateVehiclePositions(){
-    // activate trips whose startTime <= now
     remainingTrips = remainingTrips.filter(t=>{
       if(t.startTime<=animationTime) {
         const path = interpolateTripPath(t);
-        path.parentTrip = t;  // Store reference to parent trip        
+        path.parentTrip = t;         
         if(path.length) {
           tripPaths.push(path);
-          // If inheriting marker from previous block, use it
           if (t._inheritedMarker) {
             vehicleMarkersWithActiveTrip.push(t._inheritedMarker);
             if(!allVehicleMarkers.includes(t._inheritedMarker)) {
@@ -931,7 +898,7 @@ function UpdateVehiclePositions(){
               fillColor: (window.tripIds2 && window.tripIds2.has(t.trip_id) && (!window.tripIds1 || !window.tripIds1.has(t.trip_id))) ? 'orange' : 'green',
               fillOpacity: 1
             }).addTo(map);
-            m.parentTrip = t; // Store reference to parent trip
+            m.parentTrip = t;
             allVehicleMarkers.push(m);
             vehicleMarkersWithActiveTrip.push(m);
           }
@@ -941,18 +908,14 @@ function UpdateVehiclePositions(){
       return true;
     });
 
-  // Update active vehicles and remove finished ones
     for (let i = tripPaths.length - 1; i >= 0; i--) {
       const path = tripPaths[i];
       const endTime = path[path.length - 1].time;
       if (animationTime >= endTime) {
-        // Trip finished: try to connect to next trip with same block_id
         const finishedTrip =path.parentTrip;
-        //console.log(`Trip ${finishedTrip.trip_id} finished at ${formatTime(endTime)}. Trying to find next connection`);
 
         if (finishedTrip){
-            //update the veh-kilometer plot
-            const shapePts = shapes.filter(s => s.shape_id === finishedTrip.shape_id);
+            const shapePts = shapesById[finishedTrip.shape_id] || [];
             let tripDistanceKm = 0;
             if (shapePts.length > 1) {
               tripDistanceKm = shapeDistance(shapePts);
@@ -962,14 +925,11 @@ function UpdateVehiclePositions(){
 
         if (finishedTrip && finishedTrip.block_id) {
           const tripsForBlock = blockIdTripMap[finishedTrip.block_id] || [];
-          // Find the next trip with startTime > endTime
           const nextTrip = finishedTrip.nextTrip;
             if (nextTrip && nextTrip.startTime > endTime && remainingTrips.includes(nextTrip)) {
-            //there is a next trip with the same blockID
-            // Calculate distance and layover
-            const endPos = path[path.length - 1];
-            const stopIds = tripStopsMap[nextTrip.trip_id];
-            const startStopId = stopIds ? stopIds[0] : null;
+
+            const endPos = path[path.length - 1];            
+            const startStopId = tripStartTimeAndStopMap[nextTrip.trip_id].stop_id;
             const startStop = stops.find(s => s.id === startStopId);
                     
             const dist = calculateDistance(endPos.lat, endPos.lon, startStop.lat, startStop.lon);
@@ -977,31 +937,25 @@ function UpdateVehiclePositions(){
             let msg = `Block ${finishedTrip.block_id} involving trips ${finishedTrip.trip_id} and ${nextTrip.trip_id}: Layover ${Math.round(layover / 60)} min, Distance ${Math.round(dist)} m`;
 
             if ((layover > 7200) || ((dist > 400 || layover < 7200) && (dist / layover > 5))) {
-              //if the two trips are > 2hrs apart, treat them as two unrelated trips
-              //another case is if the trips are >400m apart and within 2hrs connection, and the speed is > 5m/s (18km/h). Treat this case as if the block_id is miscoded, and the trip is not the same physical vehicl
               msg += " ALERT: This is not considered a connection although the trips share the same block_id";
-              msg += `DEBUG: endPos=${endPos.lat}${endPos.lon}, startStop=${startStop.lat}${startStop.lon}, startStopId=${startStopId}[${[...stopIds].join(', ')}]`;
+              msg += `DEBUG: endPos=${endPos.lat}${endPos.lon}, startStop=${startStop.lat}${startStop.lon}, startStopId=${startStopId}`;
               console.log(msg);
             }else{              
-              // Inherit marker for next trip
               nextTrip._inheritedMarker = vehicleMarkersWithActiveTrip[i];
-              vehicleMarkersWithActiveTrip[i].setLatLng([startStop.lat, startStop.lon]); //move the marker to the start of the next trip
+              vehicleMarkersWithActiveTrip[i].setLatLng([startStop.lat, startStop.lon]); 
   
-              // Remove path and marker from current arrays, but don't remove marker from map
               tripPaths.splice(i, 1);
               vehicleMarkersWithActiveTrip.splice(i, 1);    
               continue;
             }
           }
         }
-        // No next trip: remove marker and path
         map.removeLayer(vehicleMarkersWithActiveTrip[i]);
-        allVehicleMarkers = allVehicleMarkers.filter(m => m !== vehicleMarkersWithActiveTrip[i]); //remove from allVehicleMarkers        
+        allVehicleMarkers = allVehicleMarkers.filter(m => m !== vehicleMarkersWithActiveTrip[i]);     
         vehicleMarkersWithActiveTrip.splice(i, 1);
         tripPaths.splice(i, 1);
         continue;
       }
-      // Animate marker as usual
       const idx = timedIndex(animationTime, path);
       if (idx >= 0 && idx < path.length - 1) {
         const a = path[idx], b = path[idx + 1];
@@ -1012,7 +966,6 @@ function UpdateVehiclePositions(){
       }
     }
 
-    // Stop when no trips remain and all animated complete
     if (!remainingTrips.length && tripPaths.every(path => path[path.length - 1].time <= animationTime)) {
       stopAnimation();
     }
@@ -1022,41 +975,33 @@ function UpdateVehiclePositions(){
 
 function stopAnimation() {  
 
-  // 1) Clear the running interval
   if (animationTimer) {
     clearInterval(animationTimer);
     animationTimer = null;
   }
 
-  // 2) Remove all vehicle markers from the map
   allVehicleMarkers.forEach(marker => {
     if (marker && map.hasLayer(marker)) {
       map.removeLayer(marker);
     }
   });
   allVehicleMarkers = [];
-  updateTripPlot(animationTime); // Final update to trip plot
+  updateTripPlot(animationTime); 
 
-    // append the final data point to the 
   const nextHour = Math.ceil(animationTime / 3600);
   updateHeadwayPlotForHour(nextHour-1);
 
-  // 3) Reset all trip/animation state
   tripPaths = [];
   remainingTrips = [];
   vehicleMarkersWithActiveTrip = [];
 
-  // 4) Reset the clock
   animationTime = null;  
   document.getElementById('timeDisplay').textContent = '00:00:00';
   
-  // 5) Reset pause button label
   const pauseButton = document.getElementById('pauseButton');
   if (pauseButton) pauseButton.textContent = '⏯️ Pause';
 }
 
-
-// === Helper: find segment index by time using binary search ===
 function timedIndex(time, path) {
   let low = 0, high = path.length - 1;
   while (low <= high) {
@@ -1077,13 +1022,11 @@ function formatTime(seconds) {
   return `${h}:${m}:${s}`;
 }
 
-//pause function
 function togglePauseResume(){
   const pauseButton = document.getElementById('pauseButton');
   if (animationTimer) {
     clearInterval(animationTimer);
-    animationTimer = null;
-    console.log("Simulation paused.");
+    animationTimer = null;    
     pauseButton.textContent = '⏯️ Resume';
   }else{
     pauseButton.textContent = '⏯️ Pause';
@@ -1093,24 +1036,24 @@ function togglePauseResume(){
   }
 }
 
-//speed control
 function changeAnimationSpeed(){
     speedMultiplier = parseFloat(document.getElementById('speedSelect').value);
 }
 
 function showProgressBar() {
-  document.getElementById('progressBarContainer').style.display = 'block';
-  setProgressBar(0);
-   document.getElementById('uiBlockOverlay').style.display = 'block'; //when loading data, block UI interaction
-
+  document.getElementById('progressBarContainer').style.display = 'block';  
+  document.getElementById('uiBlockOverlay').style.display = 'block';
 }
-function setProgressBar(percent) {
+function setProgressBar(percent, mainText) {
+  if (!mainText){
+    mainText = 'Loading GTFS File';
+  }
   document.getElementById('progressBar').style.width = percent + '%';
-  document.getElementById('progressBarText').textContent = `Loading GTFS File: ${Math.round(percent)}%`;
+  document.getElementById('progressBarText').textContent = `${mainText}: ${Math.round(percent)}%`;
 }
 function hideProgressBar() {
   document.getElementById('progressBarContainer').style.display = 'none';
-  document.getElementById('uiBlockOverlay').style.display = 'none'; // unlock UI interaction
+  document.getElementById('uiBlockOverlay').style.display = 'none'; 
 }
 
 function showTransitScorePopup(msg) {
@@ -1125,14 +1068,40 @@ function showTransitScorePopup(msg) {
   }, 3000);
 }
 
+function updateLegendFontSizeForMobile() {
+  const isMobile = window.innerWidth <= 900;
+  const titleFontSize = isMobile ? 9 : 16; 
+  const legendFontSize = isMobile ? 9 : 14;
+
+  if (tripPlotChart) {
+    tripPlotChart.options.plugins.size = legendFontSize;
+    tripPlotChart.options.plugins.title.font.size = titleFontSize;
+    tripPlotChart.update();
+  }
+  if (vehKmChart) {
+    vehKmChart.options.plugins.legend.labels.font.size = legendFontSize;
+    vehKmChart.options.plugins.title.font.size = titleFontSize;
+    vehKmChart.update();
+  }
+  if (tripsPerHourChart) {
+    tripsPerHourChart.options.plugins.legend.labels.font.size = legendFontSize;
+    tripsPerHourChart.options.plugins.title.font.size = titleFontSize;
+    tripsPerHourChart.update();    
+  }
+}
+
+
+window.addEventListener('resize', updateLegendFontSizeForMobile);
+
 // === Run on Load ===
 window.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('uiBlockOverlay').style.display = 'block'; //when loading for the first time, block UI interaction
   loadGtfsFromWebZip();
   
   document.getElementById('routeTypeSelect');
   document.getElementById('serviceIdSelect');
   document.getElementById('playBtn').addEventListener('click', () => {
-    stopAnimation(); // Stop any existing animation first
+    stopAnimation(); 
     initializeAnimation();
     startAnimation();
   });
@@ -1144,9 +1113,9 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('stopBtn').addEventListener('click', stopAnimation);
   document.getElementById('speedSelect').addEventListener('change', changeAnimationSpeed);
 
-  document.getElementById('updateMapBtn').addEventListener('click', function() {
-    // Use the same logic as at the start of simulation
+  document.getElementById('updateMapBtn').addEventListener('click', async function() {
     stopAnimation();
+    await filterTrips(true);     
     plotFilteredStopsAndShapes(filteredTrips);
   });
 
@@ -1160,9 +1129,9 @@ window.addEventListener('DOMContentLoaded', () => {
   initTripPlot();
   setupVehKmPlot();
   setupTripsPerHourPlot();
+  updateLegendFontSizeForMobile();
   setupTransitScoreMapClickHandler();
 
-  // Ribbon icon toggle logic (not mutually exclusive)
   document.querySelectorAll('.ribbon-icon').forEach(btn => {
     btn.addEventListener('click', function() {
       const canvasId = this.getAttribute('data-canvas');
@@ -1171,7 +1140,6 @@ window.addEventListener('DOMContentLoaded', () => {
       const canvas = document.getElementById(canvasId);
       const isActive = this.classList.contains('active');
 
-      // Toggle active state and canvas visibility
       if (isActive) {
         this.classList.remove('active');
         if (canvas) canvas.style.display = 'none';
@@ -1180,19 +1148,31 @@ window.addEventListener('DOMContentLoaded', () => {
         this.classList.add('active');
         if (canvas) canvas.style.display = 'flex';
       }
+
+      if (window.innerWidth <= 900) {
+        const exclusiveCanvases = ['graphsCanvas', 'statsCanvas', 'transitScoreCanvas'];
+          if(exclusiveCanvases.includes(canvasId)) {
+          exclusiveCanvases.forEach(id => {
+            if (id !== canvasId) {
+              const otherCanvas = document.getElementById(id);
+              if (otherCanvas && otherCanvas.style.display !== 'none') {
+                otherCanvas.style.display = 'none';
+                document.querySelectorAll(`.ribbon-icon[data-canvas="${id}"]`).forEach(icon => icon.classList.remove('active'));
+              }
+            }
+          });
+        }
+      }
+
     });
   });
 
-  // Tab logic for graphs and stats
   document.querySelectorAll('.canvas-header').forEach(header => {
     header.querySelectorAll('.tab-btn').forEach(tabBtn => {
       tabBtn.addEventListener('click', function() {
-        // Remove active from all tabs in this header
         header.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        // Hide all tab-contents in this canvas
         const canvas = header.parentElement;
         canvas.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
-        // Activate this tab
         this.classList.add('active');
         const tabId = this.getAttribute('data-tab');
         canvas.querySelector(`#${tabId}`).classList.add('active');
@@ -1216,23 +1196,20 @@ window.addEventListener('DOMContentLoaded', () => {
     sel.dispatchEvent(new Event('change'));
   };
 
-  // Handle all close-canvas buttons
   document.querySelectorAll('.close-canvas-btn').forEach(btn => {
     btn.onclick = function() {
-      // Find the parent floating-canvas
       let canvas = btn.closest('.floating-canvas');
       if (canvas) canvas.style.display = 'none';
-      // Also deactivate the ribbon icon if needed
       const canvasId = canvas.id;
       document.querySelectorAll(`.ribbon-icon[data-canvas="${canvasId}"]`).forEach(icon => icon.classList.remove('active'));
     };
   });
 
-  // open the first canvas by default
-  document.querySelector('.ribbon-icon[data-canvas="animationCanvas"]').click();
+  if (window.innerWidth > 900) {
+    document.querySelector('.ribbon-icon[data-canvas="animationCanvas"]').click();
+  }
   document.querySelector('.ribbon-icon[data-canvas="helpCanvas"]').click();
 
-  // Make some of the canvas draggable
   ['graphsCanvas', 'statsCanvas', 'helpCanvas', 'animationCanvas'].forEach(canvasId => {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
@@ -1276,5 +1253,80 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('aggregateStops').addEventListener('change', function() {
     skipAggregatingStopThreshold = this.checked ? 200 : Infinity; 
     plotFilteredStopsAndShapes(filteredTrips);
+  });
+
+  map.createPane('highlightPane');
+  map.getPane('highlightPane').style.zIndex = 399;
+});
+
+/* added: one-time runtime resize helper (desktop only) ------------------ */
+/**
+ * Append a transient helper to a floating-canvas that points toward its resizer.
+ * The helper auto-hides after 5s. Shown once per session (sessionStorage key).
+ */
+function showResizeHelperOnceForCanvas(canvasEl) {
+  if (!canvasEl) return;
+  if (window.innerWidth <= 900) return; // desktop-only
+  if (sessionStorage.getItem('resizeHelperShown')) return;
+
+  // create helper
+  const helper = document.createElement('div');
+  helper.className = 'resize-helper';
+  helper.innerHTML = `<span class="resize-label">Need to resize?</span><span class="resize-arrow" aria-hidden="true"></span>`;
+  // attach inside canvas so it follows canvas positioning and z-index
+  canvasEl.style.position = canvasEl.style.position || 'fixed';
+  canvasEl.appendChild(helper);
+
+  // try to nudge helper location if canvas has a .resizer element
+  const resizer = canvasEl.querySelector('.resizer');
+  if (resizer) {
+    // place helper slightly above/left of the resizer grip
+    helper.style.right = (parseFloat(getComputedStyle(resizer).right || 12) + 6) + 'px';
+    helper.style.bottom = (parseFloat(getComputedStyle(resizer).bottom || 6) + 6) + 'px';
+  } else {
+    // default offset
+    helper.style.right = '12px';
+    helper.style.bottom = '18px';
+  }
+
+  // mark shown (session only)
+  sessionStorage.setItem('resizeHelperShown', '1');
+
+  // remove after 5s
+  const t = setTimeout(() => {
+    removeResizeHelper(helper);
+    clearTimeout(t);
+  }, 5000);
+
+  // also remove on any pointerdown inside the canvas (user might interact)
+  const onPointerDown = () => {
+    removeResizeHelper(helper);
+    canvasEl.removeEventListener('pointerdown', onPointerDown);
+  };
+  canvasEl.addEventListener('pointerdown', onPointerDown);
+}
+
+function removeResizeHelper(el) {
+  if (!el) return;
+  if (el.parentNode) el.parentNode.removeChild(el);
+}
+
+/* Wire the helper to the ribbon icons.
+   When a graphsCanvas or statsCanvas is opened on desktop, show helper once. */
+document.addEventListener('DOMContentLoaded', () => {
+  // Add lightweight listener that runs after the existing ribbon click handlers.
+  document.querySelectorAll('.ribbon-icon').forEach(btn => {
+    btn.addEventListener('click', function() {
+      const canvasId = this.getAttribute('data-canvas');
+      if (!canvasId) return;
+      // run shortly after UI toggles so we can detect visibility
+      setTimeout(() => {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+        if (canvas.style.display !== 'none' && (canvasId === 'graphsCanvas' || canvasId === 'statsCanvas')) {
+          showResizeHelperOnceForCanvas(canvas);
+        }
+      }, 120);
+    });
   });
 });
