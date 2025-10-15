@@ -121,7 +121,8 @@ html, body {
     opacity: 0;
     transition: opacity 0.2s;
     font-size: 0.95rem;
-    pointer-events: none;
+    pointer-events: none;          
+    white-space: normal;
     }
 
     .tooltip:hover .tooltiptext {
@@ -1527,3 +1528,4 @@ html, body, #controls, .canvas-content {
   .headway-help { display: none !important; }
 
 }
+
