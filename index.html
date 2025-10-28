@@ -233,7 +233,7 @@
 
     <h4><strong>Loading Data</strong></h4>
     <ul>
-      <li>The page starts with a default Vancouver GTFS dataset from October 2025</li>
+      <li>The page starts with a default Vancouver GTFS dataset from August 2025</li>
       <li>To load your own data to explore: click <strong>Load My Own GTFS ZIP</strong>. Nearly all transit agencies publish their gtfs on the web as a zip file, and usually this zip file can be used directly here.
         The zip file should contain the typical GTFS files including:</li>
         <ul>
@@ -275,11 +275,26 @@
       <li> This score is an approximation intended for quick exploration and not a formal metric!</li>
     </ul>
 
+    <p style="font-size:0.95em; color:#0078d7; cursor:pointer; text-decoration:underline;" id="openChangeLogBtn">
+      📝 See ChangeLog
+    </p>
+
     <p style="font-size:0.95em; color:#2400f3;">
       Want more features or help? Contact me (Luke Li) on
       <a href="https://www.linkedin.com/in/luke-li-05445086/" target="_blank" style="color:#0078d7; text-decoration:underline;">LinkedIn</a>.
     </p>
     <img src="barcode_linkedin_lukeli.jpg" alt="Barcode" style="display:block; margin: 18px auto 0 auto; max-width:220px;">
+  </div>
+</div>
+
+<!-- ChangeLog Canvas -->
+<div id="changeLogCanvas" class="floating-canvas" style="display:none; max-width: 700px;">
+  <div class="canvas-header">
+    ChangeLog
+    <button class="close-canvas-btn" style="margin-left:auto; background:none; border:none; color:#fff; font-size:1.3em; cursor:pointer;">✖</button>
+  </div>
+  <div class="canvas-content" id="changeLogContent">
+    <p>Loading changelog...</p>
   </div>
 </div>
 
@@ -334,4 +349,3 @@
 
 </body>
 </html>
-

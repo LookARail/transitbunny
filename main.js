@@ -384,11 +384,25 @@ function buildServiceDateDict() {
 
   // 4. Build generic weekdays if possible (at least 3 dates per weekday with no calendar_dates modification)
   if (calendar.length) {
+    // Build set of service_ids that are actually used in trips
+    const usedServiceIds = new Set(trips.map(t => t.service_id));
+
     // Find all dates with no calendar_dates modification
     const modifiedDates = new Set(calendarDates.map(cd => cd.date));
     const weekdayDates = { monday:[], tuesday:[], wednesday:[], thursday:[], friday:[], saturday:[], sunday:[] };
     for (const date in serviceDateDict) {
       if (modifiedDates.has(date)) continue;
+      
+      // Filter out service_ids that are not used in trips for this date
+      const dateServiceIds = serviceDateDict[date];
+      const usedServiceIdsForDate = new Set([...dateServiceIds].filter(sid => usedServiceIds.has(sid)));
+      
+      // Only include this date if it has at least one used service_id
+      if (usedServiceIdsForDate.size === 0) continue;
+      
+      // Update serviceDateDict with filtered service_ids
+      serviceDateDict[date] = usedServiceIdsForDate;
+      
       const dt = new Date(+date.slice(0,4), +date.slice(4,6)-1, +date.slice(6,8));
       const weekday = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'][dt.getDay()];
       weekdayDates[weekday].push(date);
@@ -397,7 +411,16 @@ function buildServiceDateDict() {
     for (const wd in weekdayDates) {
       if (weekdayDates[wd].length >= 3) {
         const label = wd.charAt(0).toUpperCase() + wd.slice(1) + ' (Generic)';
-        genericWeekdayDates[label] = weekdayDates[wd].slice(0, 3); // pick first 3
+        const candidateDates = weekdayDates[wd].slice(0, 1); 
+        
+        genericWeekdayDates[label] = candidateDates;
+        // Log the service_ids present for each date used by this generic weekday
+        const servicesByDate = {};
+        candidateDates.forEach(d => {
+          const s = serviceDateDict[d] || new Set();
+          servicesByDate[d] = [...s];
+        });
+        console.log(`Generic weekday ${label} contains service_ids:`, servicesByDate);
       }
     }
   }
@@ -582,7 +605,7 @@ async function filterTrips(useAllServiceDates = false) {
         filteredTrips2 = filteredTrips2.filter(t =>selectedServiceIdsArr[1].has(t.service_id));
       }
     }
-    
+
     const tripMap = new Map();
     [...filteredTrips1, ...filteredTrips2].forEach(t => {
       tripMap.set(t.trip_id, t);
@@ -610,25 +633,39 @@ async function filterTrips(useAllServiceDates = false) {
     const newStopTimes = await requestFilteredStopTimesFromWorker(missingTripIds.map(t => t.trip_id));              
     hideProgressBar();
     stopTimes = stopTimes.concat(newStopTimes);
-    tripStartTimeAndStopMap = {}; //build tripStartTimemap   
-    stopTimes.forEach(st => {
-      if (st.stop_sequence == 1) {
-        const depTimeStr = st.departure_time || st.arrival_time || null;
-        if (depTimeStr) {
-          const depTimeSec = timeToSeconds(depTimeStr);
-          // Only set if not already set, or if this depTimeSec is earlier
-          if (
-            !tripStartTimeAndStopMap[st.trip_id] 
-          ) {
-            tripStartTimeAndStopMap[st.trip_id] = {
-              departureTimeSec: depTimeSec,
-              stop_id: st.stop_id
-            };
-          }
-        }
+    console.log(`Loaded ${newStopTimes.length} additional stop times for ${missingTripIds.length} trips.`);
+
+    // Incremental update: find minimum stop_sequence per trip in newStopTimes and merge
+    tripStartTimeAndStopMap = tripStartTimeAndStopMap || {};
+    const minByTrip = new Map();
+    newStopTimes.forEach(st => {
+      const seq = Number(st.stop_sequence) || 0;
+      const depTimeStr = st.departure_time || st.arrival_time || null;
+      if (!depTimeStr) return;
+      const depSec = timeToSeconds(depTimeStr);
+
+      const cur = minByTrip.get(st.trip_id);
+      if (!cur || seq < cur.stop_sequence || (seq === cur.stop_sequence && depSec < cur.departureTimeSec)) {
+        minByTrip.set(st.trip_id, {
+          stop_sequence: seq,
+          departureTimeSec: depSec,
+          stop_id: st.stop_id
+        });
       }
     });
 
+    for (const [tripId, rec] of minByTrip) {
+      const existing = tripStartTimeAndStopMap[tripId];
+      const existingSeq = existing?.stop_sequence ?? Infinity;
+      const existingDep = existing?.departureTimeSec ?? Infinity;
+      if (!existing || rec.stop_sequence < existingSeq || (rec.stop_sequence === existingSeq && rec.departureTimeSec < existingDep)) {
+        tripStartTimeAndStopMap[tripId] = {
+          departureTimeSec: rec.departureTimeSec,
+          stop_id: rec.stop_id,
+          stop_sequence: rec.stop_sequence
+        };
+      }
+    }
   }
 }
 
@@ -846,6 +883,8 @@ function initializeAnimation() {
   tripsPerHourSeries = {};
 
   buildMostCommonShapeIdByRouteDir();
+
+  console.log(`tripStartTimeMap: ${tripStartTimeAndStopMap.length} valid trip numbers:  ${remainingTrips.length} out of ${filteredTrips.length} filtered trips`);
 
   animationTime = remainingTrips.reduce((min, t) => Math.min(min, t.startTime), Infinity);
 
@@ -1067,6 +1106,76 @@ function showTransitScorePopup(msg) {
   }, 3000);
 }
 
+// ...existing code...
+async function openChangeLogCanvas() {
+  const canvas = document.getElementById('changeLogCanvas');
+  const content = document.getElementById('changeLogContent');
+
+  console.log('Opening ChangeLog Canvas...'); // Debugging log
+
+  if (!canvas) {
+    console.error('changeLogCanvas element not found');
+    return;
+  }
+
+  // Ensure it's treated as a floating canvas and positioned fixed
+  canvas.classList.add('floating-canvas');
+  canvas.style.position = 'fixed';
+  canvas.style.display = 'flex';
+
+  // If helpCanvas exists, copy its computed positioning so ChangeLog matches it (desktop & mobile)
+  const helpEl = document.getElementById('helpCanvas');
+  if (helpEl) {
+    const helpCS = window.getComputedStyle(helpEl);
+    // copy a set of layout-related properties from helpCanvas
+    const propsToCopy = [
+      'left','right','top','bottom',
+      'width','height','max-width','max-height',
+      'border-radius','padding','margin','box-shadow'
+    ];
+    propsToCopy.forEach(p => {
+      const v = helpCS.getPropertyValue(p);
+      if (v) canvas.style.setProperty(p, v);
+    });
+
+    // put ChangeLog above helpCanvas
+    const helpZ = parseInt(helpCS.zIndex) || 2400;
+    canvas.style.zIndex = (helpZ + 1).toString();
+  } else {
+    // fallback if helpCanvas missing
+    canvas.style.zIndex = '3001';
+    canvas.style.right = '32px';
+    canvas.style.bottom = '80px';
+    canvas.style.width = '600px';
+    canvas.style.maxWidth = '96vw';
+    canvas.style.height = '60vh';
+  }
+
+  // ensure content container scrolls to top
+  if (content) content.scrollTop = 0;
+
+  // Load changelog.txt
+  try {
+    console.log('Fetching changelog.txt...'); // Debugging log
+    const response = await fetch('changelog.txt');
+    if (!response.ok) {
+      throw new Error('Changelog file not found');
+    }
+    const text = await response.text();
+    console.log('Changelog content fetched successfully.'); // Debugging log
+
+    // Convert line breaks to HTML and preserve formatting
+    content.innerHTML = '<pre style="white-space: pre-wrap; font-family: inherit; margin: 0;">' +
+                        text.replace(/</g, '&lt;').replace(/>/g, '&gt;') +
+                        '</pre>';
+  } catch (error) {
+    console.error('Error loading changelog:', error); // Debugging log
+    content.innerHTML = '<p style="color: #d73a49;">Error loading changelog: ' + error.message + '</p>' +
+                       '<p>Please ensure <code>changelog.txt</code> exists in the same folder as index.html</p>';
+  }
+}
+// ...existing code...
+
 function updateLegendFontSizeForMobile() {
   const isMobile = window.innerWidth <= 900;
   const titleFontSize = isMobile ? 9 : 16; 
@@ -1209,7 +1318,12 @@ window.addEventListener('DOMContentLoaded', () => {
   }
   document.querySelector('.ribbon-icon[data-canvas="helpCanvas"]').click();
 
-  ['graphsCanvas', 'statsCanvas', 'helpCanvas', 'animationCanvas'].forEach(canvasId => {
+  // ChangeLog button handler
+  document.getElementById('openChangeLogBtn').addEventListener('click', function() {
+    openChangeLogCanvas();
+  });
+
+  ['graphsCanvas', 'statsCanvas', 'helpCanvas', 'animationCanvas', 'changeLogCanvas'].forEach(canvasId => {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
     const header = canvas.querySelector('.canvas-header');
