@@ -630,6 +630,7 @@ async function filterTrips(useAllServiceDates = false) {
   if (missingTripIds.length > 0) {
     showProgressBar(); 
     setProgressBar(0, 'Loading stop times for filtered trips...');   
+    // Log first 5 missing trip_ids for manual inspection
     const newStopTimes = await requestFilteredStopTimesFromWorker(missingTripIds.map(t => t.trip_id));              
     hideProgressBar();
     stopTimes = stopTimes.concat(newStopTimes);

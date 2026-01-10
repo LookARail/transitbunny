@@ -152,6 +152,7 @@ let STOP_TIMES_TRIP_INDEX = null;
 let STOP_TIMES_HEADER_IDX = null; 
 let STOP_TIMES_DATA_START = 0; 
 let STOP_TIMES_INDEX_WARNED_NONCONTIGUOUS = false;
+let STOP_TIMES_HAS_NONCONTIGUOUS_BLOCKS = false;
 
 function parseCsvHeaderLine(line) {
   const out = [];
@@ -241,8 +242,9 @@ function buildStopTimesTripIndex(u8) {
           currentIndexedTrip = curTripId;
         } else if (curTripId && currentIndexedTrip && currentIndexedTrip !== curTripId) {
           if (!STOP_TIMES_INDEX_WARNED_NONCONTIGUOUS) {
-            postMessage({ type: 'status', message: 'Warning: Non-contiguous trip_id blocks in stop_times.txt; index captures first block per trip.' });
+            postMessage({ type: 'status', message: 'Warning: Non-contiguous trip_id blocks in stop_times.txt; will use full scan instead of index.' });
             STOP_TIMES_INDEX_WARNED_NONCONTIGUOUS = true;
+            STOP_TIMES_HAS_NONCONTIGUOUS_BLOCKS = true;
           }
           const prev = tripIndex.get(currentIndexedTrip);
           if (prev && prev.end == null) prev.end = rowStart;
@@ -382,16 +384,21 @@ onmessage = async function (e) {
         try {
           buildStopTimesTripIndex(stBytes);
         } catch (err) {
-          postMessage({ type: 'status', message: 'Worker: stop_times index failed; falling back to full scan for this request' });
-          const tripsToFetchSet = new Set(tripIds);
-          const stopTimesFallback = [];
-          const onRow = (_tripId, rowObj) => stopTimesFallback.push(rowObj);
-          const onProgress = (pct) => postMessage({ type: 'progress', file: 'filtered_stop_times', progress: pct });
-          await parseStopTimesStreamFromUint8Array(stBytes, tripsToFetchSet, onRow, onProgress);
-          postMessage({ type: 'progress', file: 'filtered_stop_times', progress: 1.0 });
-          postMessage({ type: 'filteredStopTimes', stopTimes: stopTimesFallback, requestId });
-          return;
+          postMessage({ type: 'status', message: 'Worker: stop_times index build failed; falling back to full scan for this request' });
+          STOP_TIMES_HAS_NONCONTIGUOUS_BLOCKS = true;
         }
+      }
+
+      // If non-contiguous blocks detected, use full scan instead of index
+      if (STOP_TIMES_HAS_NONCONTIGUOUS_BLOCKS) {
+        const tripsToFetchSet = new Set(tripIds);
+        const stopTimesFallback = [];
+        const onRow = (_tripId, rowObj) => stopTimesFallback.push(rowObj);
+        const onProgress = (pct) => postMessage({ type: 'progress', file: 'filtered_stop_times', progress: pct });
+        await parseStopTimesStreamFromUint8Array(stBytes, tripsToFetchSet, onRow, onProgress);
+        postMessage({ type: 'progress', file: 'filtered_stop_times', progress: 1.0 });
+        postMessage({ type: 'filteredStopTimes', stopTimes: stopTimesFallback, requestId });
+        return;
       }
 
       const out = [];
@@ -425,6 +432,7 @@ onmessage = async function (e) {
       STOP_TIMES_HEADER_IDX = null;
       STOP_TIMES_DATA_START = 0;
       STOP_TIMES_INDEX_WARNED_NONCONTIGUOUS = false;
+      STOP_TIMES_HAS_NONCONTIGUOUS_BLOCKS = false;
 
       const zipFile = fflate.unzipSync(new Uint8Array(e.data.rawZip));
 
