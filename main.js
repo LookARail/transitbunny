@@ -851,6 +851,9 @@ function initializeAnimation() {
     vehKmChart.options.scales.x.min = undefined;
     vehKmChart.update();
   }
+  
+  // Reset roster chart
+  resetRosterChart();
 
   window.tripIds1 = new Set(filteredTrips1.map(t => t.trip_id));
   window.tripIds2 = new Set(filteredTrips2.map(t => t.trip_id));
@@ -960,6 +963,10 @@ function UpdateVehiclePositions(){
               tripDistanceKm = shapeDistance(shapePts);
             }
             updateVehKmOnTripFinish(finishedTrip, tripDistanceKm, endTime);
+            
+            // Add trip to roster diagram
+            const startTime = finishedTrip.startTime;
+            addTripToRoster(finishedTrip, startTime, endTime, tripDistanceKm);
         }
 
         if (finishedTrip && finishedTrip.block_id) {
@@ -1197,6 +1204,10 @@ function updateLegendFontSizeForMobile() {
     tripsPerHourChart.options.plugins.title.font.size = titleFontSize;
     tripsPerHourChart.update();    
   }
+  if (rosterChart) {
+    rosterChart.options.plugins.title.font.size = titleFontSize;
+    rosterChart.update();
+  }
 }
 
 
@@ -1238,6 +1249,7 @@ window.addEventListener('DOMContentLoaded', () => {
   initTripPlot();
   setupVehKmPlot();
   setupTripsPerHourPlot();
+  setupRosterPlot();
   updateLegendFontSizeForMobile();
   setupTransitScoreMapClickHandler();
 

@@ -139,6 +139,7 @@
     <button class="tab-btn active" data-tab="tripPlotTab"># of Vehicles</button>
     <button class="tab-btn" data-tab="vehKmPlotTab">Vehicle-Kilometer</button>
     <button class="tab-btn" data-tab="tripsPerHourTab">Headway</button>
+    <button class="tab-btn" data-tab="rosterTab">Roster</button>
     <button class="close-canvas-btn" title="Close" style="margin-left:auto; background:none; border:none; color:#fff; font-size:1.3em; cursor:pointer;">✖</button>
   </div>
   <div class="canvas-content">
@@ -162,6 +163,9 @@
 
         <canvas id="tripsPerHourPlot"></canvas>
       </div>
+    </div>
+    <div id="rosterTab" class="tab-content">
+      <canvas id="rosterPlot"></canvas>
     </div>
   </div>
   <div id = "graphResizer" class="resizer"></div>
@@ -336,6 +340,8 @@
 
   <!-- Your main GTFS JS -->
   <script src="libs/chart.js"></script>
+  <!-- Required by chartjs-plugin-zoom for pan gestures -->
+  <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
   <script src="libs/chartjs-plugin-zoom.js"></script>
   <script src="libs/papaparse.min.js"></script>
   <script src= "https://cdn.jsdelivr.net/npm/fflate/umd/index.js"></script>

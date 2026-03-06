@@ -525,6 +525,19 @@ html, body {
 .tab-content { display: none; }
 .tab-content.active { display: block; }
 
+/* Roster tab specific styling */
+#rosterTab {
+  height: 100%;  
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+#rosterPlot {
+  min-height: 500px !important;
+  /* allow drag gestures to reach chartjs-plugin-zoom (pan) */
+  touch-action: none;
+}
+
 #helpCanvas.floating-canvas {
   position: fixed;
   right: 32px;

@@ -307,7 +307,22 @@ let lastTripsPerHourUpdateHour = null;
 let tripsPerHourSeries = {};
 let hasOneDirectionalHourInPlot = false;
 let mostCommonShapeIdByRouteDir = {}; 
-let mostCommonShapeDistByRouteDir = {}; 
+let mostCommonShapeDistByRouteDir = {};
+
+// Roster chart variables
+let rosterChart = null;
+let rosterData = {}; // { block_id: [{trip_id, startTime, endTime, distance, shape_id, color}] }
+let rosterBlockIds = []; // ordered list of block_ids for Y-axis
+let rosterBlockIdCounter = 0;
+let rosterShapeColors = {}; // { shape_id: color }
+let rosterLastBlockCount = 0; // (legacy) used to track canvas resize
+let rosterUserInteracted = false; // once user pans/zooms, stop auto-following latest blocks
+let rosterColorPalette = [
+  "#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00",
+  "#ffff33", "#a65628", "#f781bf", "#999999", "#1b9e77",
+  "#d95f02", "#7570b3", "#e7298a", "#66a61e", "#e6ab02",
+  "#a6761d", "#666666", "#8dd3c7", "#bebada", "#fb8072"
+]; 
 
 function buildMostCommonShapeIdByRouteDir() {
   mostCommonShapeIdByRouteDir = {};
@@ -578,3 +593,415 @@ function updateHeadwayPlotForHour(hour) {
 }
 
 
+// ============================================================================
+// ROSTER CHART FUNCTIONS
+// ============================================================================
+
+function getColorForShape(shape_id) {
+  if (!shape_id) return '#999999';
+  if (rosterShapeColors[shape_id]) return rosterShapeColors[shape_id];
+  
+  const colorIndex = Object.keys(rosterShapeColors).length % rosterColorPalette.length;
+  rosterShapeColors[shape_id] = rosterColorPalette[colorIndex];
+  return rosterShapeColors[shape_id];
+}
+
+function setupRosterPlot() {
+  console.log('[ROSTER] setupRosterPlot called');
+  const ctx = document.getElementById('rosterPlot').getContext('2d');
+  rosterChart = new Chart(ctx, {
+    type: 'scatter',
+    data: {
+      datasets: []
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: { display: false },
+        title: { 
+          display: true, 
+          text: 'Block Roster Diagram',
+          font: { size: 14 }
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              const dataPoint = context.raw;
+              
+              // Get first and last stations for this trip
+              const tripStops = stopTimes.filter(st => st.trip_id === dataPoint.trip_id)
+                .sort((a, b) => a.stop_sequence - b.stop_sequence);
+              
+              let firstStation = 'N/A';
+              let lastStation = 'N/A';
+              
+              if (tripStops.length > 0) {
+                const firstStop = stops.find(s => s.id === tripStops[0].stop_id);
+                const lastStop = stops.find(s => s.id === tripStops[tripStops.length - 1].stop_id);
+                firstStation = firstStop?.name || 'Unknown';
+                lastStation = lastStop?.name || 'Unknown';
+              }
+              
+              return [
+                `Trip: ${dataPoint.trip_id}`,
+                `From: ${firstStation}`,
+                `To: ${lastStation}`,
+                `Distance: ${dataPoint.distance.toFixed(2)} km`
+              ];
+            }
+          }
+        },
+        zoom: {
+          pan: {
+            enabled: true,
+            mode: 'xy',
+            threshold: 5,
+            onPanStart: function({chart}) {
+              rosterUserInteracted = true;
+              console.log('[ROSTER] Pan started');
+              return true;
+            },
+            onPan: function({chart}) {
+              console.log('[ROSTER] Panning...');
+            },
+            onPanComplete: function({chart}) {
+              console.log('[ROSTER] Pan complete');
+            }
+          },
+          zoom: {
+            wheel: {
+              enabled: true,
+            },
+            pinch: {
+              enabled: true 
+            },
+            mode: 'xy',
+            onZoomStart: function({chart}) {
+              rosterUserInteracted = true;
+              console.log('[ROSTER] Zoom started');
+              return true;
+            },
+            onZoomComplete: function({chart}) {
+              console.log('[ROSTER] Zoom complete');
+            }
+          },
+          limits: {
+            y: { min: -0.5, max: 'original' },
+            x: { min: 'original', max: 'original' }
+          }
+        }
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          title: { display: true, text: 'Time (HH:MM)' },
+          ticks: {
+            stepSize: 3600,
+            callback: function(value) {
+              const h = Math.floor(value / 3600).toString().padStart(2, '0');
+              return `${h}:00`;
+            }
+          }
+        },
+        y: {
+          type: 'linear',
+          title: { display: true, text: 'Block' },
+          min: -0.5,
+          offset: false,
+          grid: {
+            offset: false
+          },
+          ticks: {
+            stepSize: 1,
+            callback: function(value) {
+              const index = Math.round(value);
+              if (index >= 0 && index < rosterBlockIds.length) {
+                return `#${index + 1}: ${rosterBlockIds[index]}`;
+              }
+              return '';
+            }
+          }
+        }
+      }
+    }
+  });
+  
+  console.log('[ROSTER] Chart created with pan enabled:', rosterChart.options.plugins.zoom.pan);
+  
+  // Add debug event listeners
+  const canvas = document.getElementById('rosterPlot');
+  let dragStart = null;
+  
+  canvas.addEventListener('mousedown', function(e) {
+    dragStart = {x: e.clientX, y: e.clientY, time: Date.now()};
+    console.log('[ROSTER] MOUSEDOWN at:', e.clientX, e.clientY);
+  });
+  
+  canvas.addEventListener('mousemove', function(e) {
+    if (e.buttons === 1 && dragStart) {
+      const dx = e.clientX - dragStart.x;
+      const dy = e.clientY - dragStart.y;
+      console.log('[ROSTER] MOUSEMOVE (dragging) delta:', dx, dy);
+    }
+  });
+  
+  canvas.addEventListener('mouseup', function(e) {
+    if (dragStart) {
+      const dx = e.clientX - dragStart.x;
+      const dy = e.clientY - dragStart.y;
+      const duration = Date.now() - dragStart.time;
+      console.log('[ROSTER] MOUSEUP - drag complete. Delta:', dx, dy, 'Duration:', duration + 'ms');
+      dragStart = null;
+    }
+  });
+  
+  canvas.addEventListener('click', function(e) {
+    console.log('[ROSTER] CLICK detected at:', e.clientX, e.clientY);
+  });
+  
+  // Log when zoom plugin pan events fire
+  console.log('[ROSTER] Pan callbacks registered:', {
+    onPanStart: typeof rosterChart.options.plugins.zoom.pan.onPanStart,
+    onPan: typeof rosterChart.options.plugins.zoom.pan.onPan,
+    onPanComplete: typeof rosterChart.options.plugins.zoom.pan.onPanComplete
+  });
+}
+
+function shouldIncludeInRoster(trip) {
+  // Only include if trip is in tripIds1 (first selected service date)
+  const inTripIds1 = window.tripIds1 && window.tripIds1.has(trip.trip_id);
+  
+  if (!inTripIds1) {
+    return false;
+  }
+  
+  // Get first selected route from filter
+  const routeSelect = document.getElementById('routeShortNameSelect');
+  if (!routeSelect || !routeSelect.selectedOptions.length) {
+    return false;
+  }
+  const firstSelectedRoute = routeSelect.selectedOptions[0].value;
+  
+  // Check if trip matches the route
+  const tripRoute = routes.find(r => r.route_id === trip.route_id);
+  const routeFullName = `${tripRoute?.route_short_name}-${tripRoute?.route_long_name}`;
+  
+  return routeFullName === firstSelectedRoute;
+}
+
+function addTripToRoster(trip, startTime, endTime, distance) {
+  
+  const shouldInclude = shouldIncludeInRoster(trip);
+  
+  if (!shouldInclude) return;
+  
+  const blockId = trip.block_id || `no_block_${rosterBlockIdCounter++}`;
+  const shapeId = trip.shape_id || 'no_shape';
+  
+  
+  // Add block_id to list if not present
+  if (!rosterData[blockId]) {
+    rosterData[blockId] = [];
+    rosterBlockIds.push(blockId);
+  }
+  
+  const color = getColorForShape(shapeId);
+  
+  rosterData[blockId].push({
+    trip_id: trip.trip_id,
+    startTime: startTime,
+    endTime: endTime,
+    distance: distance,
+    shape_id: shapeId,
+    color: color
+  });
+  
+  
+  updateRosterChart();
+}
+
+function updateRosterChart() {
+  if (!rosterChart) return;
+  
+  console.log('[ROSTER] updateRosterChart called, blocks:', rosterBlockIds.length);
+  
+  // Step 1: Build datasets from current data
+  const shapeDatasets = {};
+  
+  rosterBlockIds.forEach((blockId, blockIndex) => {
+    const trips = rosterData[blockId];
+    if (!trips) return;
+    
+    trips.forEach(tripData => {
+      if (!shapeDatasets[tripData.shape_id]) {
+        shapeDatasets[tripData.shape_id] = {
+          label: tripData.shape_id,
+          data: [],
+          backgroundColor: tripData.color,
+          borderColor: tripData.color,
+          borderWidth: 1,
+          pointRadius: 0,
+          pointHitRadius: 10,
+          showLine: false
+        };
+      }
+      
+      const midTime = (tripData.startTime + tripData.endTime) / 2;
+      shapeDatasets[tripData.shape_id].data.push({
+        x: midTime,
+        y: blockIndex,
+        startTime: tripData.startTime,
+        endTime: tripData.endTime,
+        trip_id: tripData.trip_id,
+        distance: tripData.distance,
+        width: tripData.endTime - tripData.startTime,
+        color: tripData.color
+      });
+    });
+  });
+  
+  rosterChart.data.datasets = Object.values(shapeDatasets);
+  
+  // Step 2: Calculate what the data bounds are
+  const dataYMax = rosterBlockIds.length - 0.5;
+  let dataXMax = 0;
+  Object.values(rosterData).forEach(trips => {
+    trips.forEach(trip => {
+      if (trip.endTime > dataXMax) dataXMax = trip.endTime;
+    });
+  });
+
+  // Step 2b: Keep the chart UI size fixed (do NOT resize canvas as blocks grow).
+  // Instead, when there are too many blocks to display nicely, auto-show the latest N blocks
+  // (as if the user panned down to the newest rows). Once the user pans/zooms, stop auto-follow.
+  if (!rosterUserInteracted && rosterBlockIds.length > 0) {
+    const minRowPx = 12; // minimum readable row height
+    const fallbackPlotHeight = rosterChart.height || document.getElementById('rosterPlot')?.clientHeight || 500;
+    const plotHeightPx = rosterChart.chartArea
+      ? (rosterChart.chartArea.bottom - rosterChart.chartArea.top)
+      : fallbackPlotHeight;
+
+    const visibleRows = Math.max(8, Math.floor(plotHeightPx / minRowPx));
+    if (rosterBlockIds.length > visibleRows) {
+      const startIndex = rosterBlockIds.length - visibleRows;
+      rosterChart.options.scales.y.min = startIndex - 0.5;
+      rosterChart.options.scales.y.max = dataYMax;
+      console.log('[ROSTER] Auto-follow latest blocks. Showing rows', startIndex, 'to', rosterBlockIds.length - 1);
+    } else {
+      rosterChart.options.scales.y.min = -0.5;
+      rosterChart.options.scales.y.max = dataYMax;
+    }
+  }
+  
+  // Step 3: Get current axis limits from the chart (these are controlled by zoom/pan)
+  const currentYMax = rosterChart.options.scales.y.max;
+  const currentXMax = rosterChart.options.scales.x.max;
+  
+  console.log('[ROSTER] Data bounds - Y:', dataYMax, 'X:', dataXMax);
+  console.log('[ROSTER] Current axis - Y:', currentYMax, 'X:', currentXMax);
+  
+  // Step 4: Only EXPAND limits if data exceeds current view (never shrink)
+  let needsUpdate = false;
+  
+  if (currentYMax == null || !isFinite(currentYMax) || dataYMax > currentYMax) {
+    console.log('[ROSTER] Expanding Y-axis from', currentYMax, 'to', dataYMax);
+    rosterChart.options.scales.y.max = dataYMax;
+    needsUpdate = true;
+  }
+  
+  if (currentXMax == null || !isFinite(currentXMax) || dataXMax > currentXMax) {
+    console.log('[ROSTER] Expanding X-axis from', currentXMax, 'to', dataXMax);
+    rosterChart.options.scales.x.max = dataXMax;
+    needsUpdate = true;
+  }
+  
+  // Step 6: Update the chart
+  rosterChart.update('none');
+  
+  if (needsUpdate) {
+    console.log('[ROSTER] Axis limits expanded, view updated');
+  }
+}
+
+function resetRosterChart() {
+  console.log('[ROSTER] Reset called');
+  rosterData = {};
+  rosterBlockIds = [];
+  rosterBlockIdCounter = 0;
+  rosterShapeColors = {};
+  rosterLastBlockCount = 0;
+  rosterUserInteracted = false;
+  
+  if (rosterChart) {
+    rosterChart.data.datasets = [];
+    rosterChart.options.scales.y.min = -0.5;
+    rosterChart.options.scales.y.max = 0.5;
+    rosterChart.options.scales.x.max = 3600; // Start at 1 hour
+    rosterChart.update('none');
+  }
+}
+
+// Custom drawing plugin for roster rectangles
+const rosterRectanglePlugin = {
+  id: 'rosterRectangles',
+  afterDatasetsDraw(chart) {
+    if (chart.canvas.id !== 'rosterPlot') return;    
+   
+    const ctx = chart.ctx;
+    const xScale = chart.scales.x;
+    const yScale = chart.scales.y;
+    
+    // Save context and set up clipping region
+    ctx.save();
+    
+    // Clip to chart area to prevent drawing outside bounds
+    const chartArea = chart.chartArea;
+    ctx.beginPath();
+    ctx.rect(chartArea.left, chartArea.top, chartArea.right - chartArea.left, chartArea.bottom - chartArea.top);
+    ctx.clip();
+    
+    const yMin = yScale.min;
+    const yMax = yScale.max;
+    const rowPxEstimate = (() => {
+      if (!isFinite(yMin) || !isFinite(yMax)) return 20;
+      const p0 = yScale.getPixelForValue(yMin);
+      const p1 = yScale.getPixelForValue(yMin + 1);
+      const d = Math.abs(p1 - p0);
+      return isFinite(d) && d > 0 ? d : 20;
+    })();
+
+    const rectHeight = Math.max(3, Math.min(18, rowPxEstimate * 0.75));
+    
+    chart.data.datasets.forEach(dataset => {
+      dataset.data.forEach(point => {
+        if (!point.startTime || !point.endTime) return;
+        // Skip rows outside the current visible window (helps performance for large rosters)
+        if (isFinite(yMin) && isFinite(yMax) && (point.y < yMin - 0.5 || point.y > yMax + 0.5)) return;
+        
+        const xStart = xScale.getPixelForValue(point.startTime);
+        const xEnd = xScale.getPixelForValue(point.endTime);
+        const yCenter = yScale.getPixelForValue(point.y);
+        
+        const rectWidth = xEnd - xStart;
+        
+        ctx.fillStyle = point.color;
+        ctx.fillRect(xStart, yCenter - rectHeight/2, rectWidth, rectHeight);
+        
+        // Add border
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 0.5;
+        ctx.strokeRect(xStart, yCenter - rectHeight/2, rectWidth, rectHeight);
+      });
+    });
+    
+    // Restore context
+    ctx.restore();
+  }
+};
+
+// Register the custom plugin
+if (typeof Chart !== 'undefined') {
+  Chart.register(rosterRectanglePlugin);
+}
