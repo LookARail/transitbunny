@@ -48,7 +48,7 @@ async function parseStopTimesStreamFromUint8Array(u8, tripsToFetchSet, onRow, on
   let pendingSkipLF = false;
   let firstChunk = true;
 
-  let idx_trip_id = -1, idx_stop_id = -1, idx_stop_seq = -1, idx_arr = -1, idx_dep = -1;
+  let idx_trip_id = -1, idx_stop_id = -1, idx_stop_seq = -1, idx_arr = -1, idx_dep = -1, idx_shape_dist = -1;
 
   const flushRow = () => {
     row.push(field);
@@ -66,6 +66,7 @@ async function parseStopTimesStreamFromUint8Array(u8, tripsToFetchSet, onRow, on
       idx_stop_seq = header.indexOf('stop_sequence');
       idx_arr     = header.indexOf('arrival_time');
       idx_dep     = header.indexOf('departure_time');
+      idx_shape_dist = header.indexOf('shape_dist_traveled');
       return;
     }
 
@@ -76,13 +77,16 @@ async function parseStopTimesStreamFromUint8Array(u8, tripsToFetchSet, onRow, on
       const stopSeq = parseInt(get(idx_stop_seq), 10) || 0;
       const arrTime = get(idx_arr).trim();
       const depTime = get(idx_dep).trim();
+      const shapeDistRaw = get(idx_shape_dist).trim();
+      const shapeDist = shapeDistRaw === '' ? null : parseFloat(shapeDistRaw);
 
       onRow(tripId, {
         trip_id:        tripId,
         stop_id:        stopId,
         stop_sequence:  stopSeq,
         arrival_time:   arrTime,
-        departure_time: depTime
+        departure_time: depTime,
+        shape_dist_traveled: Number.isFinite(shapeDist) ? shapeDist : null
       });
     }
     row = [];
@@ -191,8 +195,9 @@ function buildStopTimesTripIndex(u8) {
   const idx_stop_seq = header.indexOf('stop_sequence');
   const idx_arr      = header.indexOf('arrival_time');
   const idx_dep      = header.indexOf('departure_time');
+  const idx_shape_dist = header.indexOf('shape_dist_traveled');
   if (idx_trip_id < 0) throw new Error('stop_times.txt missing trip_id column');
-  STOP_TIMES_HEADER_IDX = { idx_trip_id, idx_stop_id, idx_stop_seq, idx_arr, idx_dep };
+  STOP_TIMES_HEADER_IDX = { idx_trip_id, idx_stop_id, idx_stop_seq, idx_arr, idx_dep, idx_shape_dist };
 
   let next = headerEnd;
   if (next < u8.length && u8[next] === CR) next++;
@@ -288,7 +293,7 @@ async function parseStopTimesSlice(u8, start, end, headerIdx, onRow) {
   let field = '';
   let row = [];
 
-  const { idx_trip_id, idx_stop_id, idx_stop_seq, idx_arr, idx_dep } = headerIdx;
+  const { idx_trip_id, idx_stop_id, idx_stop_seq, idx_arr, idx_dep, idx_shape_dist } = headerIdx;
 
   const flushRow = () => {
     row.push(field); field = '';
@@ -298,13 +303,16 @@ async function parseStopTimesSlice(u8, start, end, headerIdx, onRow) {
     const stopSeq = parseInt(get(idx_stop_seq), 10) || 0;
     const arrTime = get(idx_arr).trim();
     const depTime = get(idx_dep).trim();
+    const shapeDistRaw = get(idx_shape_dist).trim();
+    const shapeDist = shapeDistRaw === '' ? null : parseFloat(shapeDistRaw);
     if (tripId) {
       onRow(tripId, {
         trip_id: tripId,
         stop_id: stopId,
         stop_sequence: stopSeq,
         arrival_time: arrTime,
-        departure_time: depTime
+        departure_time: depTime,
+        shape_dist_traveled: Number.isFinite(shapeDist) ? shapeDist : null
       });
     }
     row = [];
@@ -471,6 +479,8 @@ onmessage = async function (e) {
           const id = obj.stop_id ? obj.stop_id.trim() : '';
           obj.id = id;
           obj.name = obj.stop_name ? obj.stop_name.trim() : '';
+          obj.parent_station = obj.parent_station ? obj.parent_station.trim() : '';
+          obj.location_type = obj.location_type !== undefined && obj.location_type !== '' ? parseInt(obj.location_type, 10) : null;
           obj.lat = parseFloat(obj.stop_lat);
           obj.lon = parseFloat(obj.stop_lon);
           if (id) stopsById[id] = obj;

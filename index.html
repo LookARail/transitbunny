@@ -176,6 +176,7 @@
   <div class="canvas-header">
     <button class="tab-btn active" data-tab="routeStatsTab">Route Statistics</button>
     <button class="tab-btn" data-tab="compareServiceDatesTab">Compare Two Service-Dates</button>
+    <button class="tab-btn" data-tab="timeDistanceTab">Time-Distance Diagram</button>
     <button class="close-canvas-btn" title="Close" style="margin-left:auto; background:none; border:none; color:#fff; font-size:1.3em; cursor:pointer;">✖</button>
   </div>
 
@@ -204,6 +205,25 @@
       </div>
       <div id="compareServiceDatesTableWrapper">
         <div id="compareServiceDatesTable"></div>
+      </div>
+    </div>
+    <div id="timeDistanceTab" class="tab-content">
+      <div class="time-distance-controls">
+        <label for="timeDistanceShapeSelect">
+          Base shape:
+          <select id="timeDistanceShapeSelect" style="min-width:220px;"></select>
+        </label>
+        <button id="refreshTimeDistanceShapesBtn">Refresh Shapes</button>
+        <button id="generateTimeDistanceBtn">Generate Diagram</button>
+      </div>
+      <div id="timeDistanceSummary" class="time-distance-summary">
+        Select one route pattern to build a static scheduled time-distance diagram.
+      </div>
+      <div id="timeDistanceEmptyState" class="time-distance-empty-state">
+        No shape selected yet.
+      </div>
+      <div id="timeDistanceChartWrapper" class="time-distance-chart-wrapper" style="display:none;">
+        <canvas id="timeDistancePlot"></canvas>
       </div>
     </div>
   </div>
@@ -350,6 +370,7 @@
   <script src="shapePopup.js"></script>
   <script src="main.js"></script>
   <script src="graph.js"></script>
+  <script src="timedistance.js"></script>
   <script src="support.js"> </script>  
   <script src="locationScore.js"></script>
   <link rel="stylesheet" href="libs/MarkerCluster.Default.css"/>
